@@ -65,12 +65,13 @@ import com.example.ui.theme.VeloOrange
 @Composable
 fun AuthScreen(
     onAuthSuccess: () -> Unit,
+    initialErrorMessage: String? = null,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val credentialManager = remember(context) { CredentialManager.create(context) }
     var isLoading by remember { mutableStateOf(false) }
-    var errorMessage by remember { mutableStateOf<String?>(null) }
+    var errorMessage by remember(initialErrorMessage) { mutableStateOf(initialErrorMessage) }
 
     LaunchedEffect(Unit) {
         attemptAutoSignIn(

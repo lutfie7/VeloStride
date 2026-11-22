@@ -29,6 +29,7 @@ import com.example.ui.MainViewModel
 import com.example.ui.screens.AuthScreen
 import com.example.ui.theme.VeloStrideTheme
 import com.google.firebase.Firebase
+import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.auth
 import kotlinx.coroutines.launch
 
@@ -40,19 +41,26 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         val themePrefs = ThemePreferences(applicationContext)
+        val isFirebaseReady = FirebaseApp.getApps(this).isNotEmpty()
 
         setContent {
             val isDarkTheme by themePrefs.isDarkMode.collectAsStateWithLifecycle(initialValue = true)
-            val currentUser by remember { Firebase.auth.authStateFlow() }
-                .collectAsStateWithLifecycle(initialValue = Firebase.auth.currentUser)
             val coroutineScope = rememberCoroutineScope()
             val credentialManager = remember(this) { CredentialManager.create(this) }
 
             VeloStrideTheme(darkTheme = isDarkTheme) {
-                val user = currentUser
-                if (user == null) {
-                    AuthScreen(onAuthSuccess = {})
+                if (!isFirebaseReady) {
+                    AuthScreen(
+                        onAuthSuccess = {},
+                        initialErrorMessage = "Konfigurasi Firebase (google-services.json) belum ada di APK ini. Tambahkan GitHub Secret GOOGLE_SERVICES_JSON di repositori GitHub Anda lalu jalankan ulang workflow Build VeloStride APK."
+                    )
                 } else {
+                    val currentUser by remember { Firebase.auth.authStateFlow() }
+                        .collectAsStateWithLifecycle(initialValue = Firebase.auth.currentUser)
+                    val user = currentUser
+                    if (user == null) {
+                        AuthScreen(onAuthSuccess = {})
+                    } else {
                     key(user.uid) {
                         val app = applicationContext
                         val vm: MainViewModel = viewModel(
@@ -93,6 +101,7 @@ class MainActivity : ComponentActivity() {
                                 signOutUser(credentialManager, coroutineScope)
                             }
                         )
+                    }
                     }
                 }
             }
