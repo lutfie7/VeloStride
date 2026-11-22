@@ -1,0 +1,408 @@
+package com.example.hardware
+
+import android.Manifest
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.app.job.JobInfo
+import android.app.job.JobParameters
+import android.app.job.JobScheduler
+import android.app.job.JobService
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
+import android.util.Log
+import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
+import com.example.MainActivity
+import com.example.R
+import com.example.core.Formatters
+import com.example.core.GpxSerializer
+import com.example.core.PerformanceEngine
+import com.example.core.ThemePreferences
+import com.example.data.model.AthleteProfile
+import com.example.data.model.DailyHealthLog
+import com.example.data.model.HealthConnectSnapshot
+import com.example.data.model.ImportedExerciseSession
+import com.example.data.model.SplitKm
+import com.example.data.model.TrackPoint
+import com.example.data.model.WorkoutActivity
+import com.example.data.repository.ElevationRepository
+import com.example.data.repository.VeloStrideRepository
+import com.google.firebase.Firebase
+import com.google.firebase.auth.auth
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import kotlin.math.roundToInt
+
+data class BandImportBatchResult(
+    val newlyImportedCount: Int,
+    val latestImportedTitle: String?,
+    val latestImportedDistanceMeters: Double,
+    val latestImportedElevationMeters: Double,
+)
+
+object BandSyncHelper {
+
+    suspend fun persistImportedBandWorkouts(
+        repository: VeloStrideRepository,
+        elevationRepository: ElevationRepository,
+        userId: String,
+        profile: AthleteProfile,
+        sessions: List<ImportedExerciseSession>,
+        existingExternalIds: Set<String>,
+    ): BandImportBatchResult {
+        var newlyImported = 0
+        var latestTitle: String? = null
+        var latestDist = 0.0
+        var latestEle = 0.0
+
+        for (session in sessions) {
+            if (session.externalId in existingExternalIds) continue
+
+            val enrichedEle = elevationRepository.enrichTrackElevation(
+                rawPoints = session.routePoints,
+                existingGainMeters = session.elevationGainMeters
+            )
+            val movingSec = session.durationSeconds.coerceAtLeast(1L)
+            val avgPace = if (session.distanceMeters >= 50.0) {
+                (movingSec / (session.distanceMeters / 1000.0)).roundToInt().coerceIn(60, 3600)
+            } else 0
+            val effort = PerformanceEngine.computeRelativeEffort(
+                movingSeconds = movingSec,
+                avgHr = session.avgHeartRate,
+                maxHr = profile.maxHr,
+                restingHr = profile.restingHr,
+                perceivedExertion = 6,
+                hrZoneSeconds = session.hrZoneSeconds
+            )
+            val deviceLabel = if (session.sourcePackage.contains("huawei", true)) {
+                "HUAWEI Band 11 Pro"
+            } else {
+                "Smart Band / Health Connect"
+            }
+            val storedPoints = GpxSerializer.downsampleTrackPoints(enrichedEle.points, 250)
+            val splits = buildKmSplitsFromPoints(
+                points = enrichedEle.points,
+                totalDistanceMeters = session.distanceMeters,
+                totalMovingSec = movingSec,
+                fallbackAvgHr = session.avgHeartRate
+            )
+
+            val workout = WorkoutActivity(
+                userId = userId,
+                title = session.title,
+                sportType = session.sportType.name,
+                distanceMeters = session.distanceMeters,
+                movingTimeSeconds = movingSec,
+                elapsedTimeSeconds = movingSec,
+                elevationGainMeters = enrichedEle.elevationGainMeters,
+                avgPaceSecPerKm = avgPace,
+                avgSpeedKmh = session.avgSpeedKmh,
+                avgHeartRate = session.avgHeartRate,
+                maxHeartRate = session.maxHeartRate,
+                avgCadence = session.avgCadence,
+                calories = session.calories,
+                relativeEffort = effort,
+                perceivedExertion = 6,
+                hrZoneSeconds = session.hrZoneSeconds,
+                routePoints = storedPoints.map { it.toMap() },
+                splits = splits.take(100).map { it.toMap() },
+                deviceName = deviceLabel,
+                elevationSource = enrichedEle.sourceLabel,
+                externalId = session.externalId,
+                notes = "Auto-synced from standalone band session (${session.sourcePackage.substringAfterLast('.').ifBlank { "wearable" }})"
+            )
+
+            if (repository.saveWorkout(userId, workout).isSuccess) {
+                newlyImported++
+                if (latestTitle == null) {
+                    latestTitle = workout.title
+                    latestDist = workout.distanceMeters
+                    latestEle = workout.elevationGainMeters
+                }
+            }
+        }
+
+        return BandImportBatchResult(
+            newlyImportedCount = newlyImported,
+            latestImportedTitle = latestTitle,
+            latestImportedDistanceMeters = latestDist,
+            latestImportedElevationMeters = latestEle
+        )
+    }
+
+    fun buildKmSplitsFromPoints(
+        points: List<TrackPoint>,
+        totalDistanceMeters: Double,
+        totalMovingSec: Long,
+        fallbackAvgHr: Int,
+    ): List<SplitKm> {
+        if (totalDistanceMeters < 200.0) return emptyList()
+        if (points.size < 2) {
+            val wholeKm = (totalDistanceMeters / 1000.0).toInt().coerceIn(1, 50)
+            val avgPace = (totalMovingSec / (totalDistanceMeters / 1000.0)).roundToInt().coerceIn(60, 3600)
+            return (1..wholeKm).map { km ->
+                SplitKm(km = km, paceSec = avgPace, eleDiff = 0.0, avgHr = fallbackAvgHr)
+            }
+        }
+        val splits = mutableListOf<SplitKm>()
+        var cumDistM = 0.0
+        var splitStartDistM = 0.0
+        var splitEleGain = 0.0
+        val hrBucket = mutableListOf<Int>()
+        var nextKmThreshold = 1000.0
+        var kmIdx = 1
+        val avgPace = (totalMovingSec / (totalDistanceMeters / 1000.0).coerceAtLeast(0.2))
+            .roundToInt()
+            .coerceIn(60, 3600)
+
+        for (i in 1 until points.size) {
+            val prev = points[i - 1]
+            val curr = points[i]
+            cumDistM += Formatters.haversineMeters(prev.lat, prev.lng, curr.lat, curr.lng)
+            val eleDiff = curr.ele - prev.ele
+            if (eleDiff > 0.0) splitEleGain += eleDiff
+            if (curr.hr > 0) hrBucket.add(curr.hr)
+
+            if (cumDistM >= nextKmThreshold && splits.size < 99) {
+                splits.add(
+                    SplitKm(
+                        km = kmIdx++,
+                        paceSec = avgPace,
+                        eleDiff = (splitEleGain * 10.0).roundToInt() / 10.0,
+                        avgHr = if (hrBucket.isNotEmpty()) hrBucket.average().roundToInt() else fallbackAvgHr
+                    )
+                )
+                splitStartDistM = cumDistM
+                splitEleGain = 0.0
+                hrBucket.clear()
+                nextKmThreshold += 1000.0
+            }
+        }
+        if (splits.isEmpty() && cumDistM >= 200.0) {
+            splits.add(
+                SplitKm(
+                    km = 1,
+                    paceSec = avgPace,
+                    eleDiff = (splitEleGain * 10.0).roundToInt() / 10.0,
+                    avgHr = if (hrBucket.isNotEmpty()) hrBucket.average().roundToInt() else fallbackAvgHr
+                )
+            )
+        }
+        return splits
+    }
+
+    fun buildDailyHealthLog(
+        userId: String,
+        hc: HealthConnectSnapshot,
+        restingHrFallback: Int,
+        vo2MaxFallback: Double,
+        recoveryScore: Int,
+        bleSteps: Int = 0,
+        bleCalories: Int = 0,
+        bleHr: Int = 0,
+        bleHrv: Double = 0.0,
+        bleDeviceName: String? = null,
+    ): DailyHealthLog {
+        val todayKey = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+        val sleepTotal = hc.sleepTotalMinutes
+        val sleepScore = if (sleepTotal > 0) {
+            val deepPct = hc.sleepDeepMinutes.toDouble() / sleepTotal
+            (((sleepTotal / 480.0) * 75.0) + (deepPct * 80.0)).roundToInt().coerceIn(35, 99)
+        } else 0
+        val source = when {
+            bleDeviceName != null -> bleDeviceName
+            hc.dataOriginPackage.contains("huawei", true) -> "HUAWEI Band 11 Pro (Health Connect)"
+            else -> "Health Connect"
+        }
+        return DailyHealthLog(
+            userId = userId,
+            dateKey = todayKey,
+            steps = hc.stepsToday + bleSteps,
+            distanceMetersToday = hc.distanceMetersToday,
+            activeCalories = hc.activeCaloriesToday + bleCalories,
+            totalCalories = hc.totalCaloriesToday + bleCalories,
+            restingHr = hc.restingHeartRateBpm.takeIf { it > 0 } ?: restingHrFallback,
+            latestHr = bleHr.takeIf { it > 0 } ?: hc.latestHeartRateBpm,
+            hrvRmssdMs = bleHrv.takeIf { it > 0.0 } ?: hc.hrvRmssdMs,
+            spo2Percent = hc.spo2Percent,
+            sleepTotalMinutes = sleepTotal,
+            sleepDeepMinutes = hc.sleepDeepMinutes,
+            sleepLightMinutes = hc.sleepLightMinutes,
+            sleepRemMinutes = hc.sleepRemMinutes,
+            sleepAwakeMinutes = hc.sleepAwakeMinutes,
+            sleepScore = sleepScore,
+            vo2MaxEstimate = hc.vo2MaxFromBand.takeIf { it > 10.0 } ?: vo2MaxFallback,
+            recoveryScore = recoveryScore,
+            sourceDevice = source
+        )
+    }
+}
+
+object BandSyncNotifier {
+    private const val CHANNEL_ID = "velostride_band_sync"
+    private const val NOTIF_ID = 4102
+
+    fun notifyNewBandWorkouts(context: Context, batch: BandImportBatchResult) {
+        if (batch.newlyImportedCount <= 0) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val granted = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!granted) return
+        }
+
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                "Smart Band Auto-Sync",
+                NotificationManager.IMPORTANCE_DEFAULT
+            ).apply {
+                description = "Notifies when standalone workouts from HUAWEI Band 11 Pro sync to VeloStride"
+            }
+            manager.createNotificationChannel(channel)
+        }
+
+        val openIntent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val pending = PendingIntent.getActivity(
+            context,
+            0,
+            openIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val title = if (batch.newlyImportedCount == 1) {
+            "Band Workout Synced: ${batch.latestImportedTitle ?: "Activity"}"
+        } else {
+            "${batch.newlyImportedCount} Smart Band Workouts Synced"
+        }
+        val body = buildString {
+            if (batch.latestImportedDistanceMeters > 0.0) {
+                append(Formatters.formatDistanceKm(batch.latestImportedDistanceMeters))
+                append(" • Elev +${batch.latestImportedElevationMeters.roundToInt()}m")
+            } else {
+                append("Synced automatically with DEM elevation & HR analysis.")
+            }
+        }
+
+        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentTitle(title)
+            .setContentText(body)
+            .setContentIntent(pending)
+            .setAutoCancel(true)
+            .build()
+
+        manager.notify(NOTIF_ID, notification)
+    }
+}
+
+object BandSyncScheduler {
+    private const val JOB_ID = 7711
+    private const val TAG = "BandSyncScheduler"
+
+    fun schedulePeriodicSync(context: Context) {
+        val scheduler = context.getSystemService(Context.JOB_SCHEDULER_SERVICE) as? JobScheduler ?: return
+        val existing = scheduler.getPendingJob(JOB_ID)
+        if (existing != null) return
+        val component = ComponentName(context, BandAutoSyncJobService::class.java)
+        val jobInfo = JobInfo.Builder(JOB_ID, component)
+            .setPeriodic(15 * 60_000L)
+            .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
+            .build()
+        val result = scheduler.schedule(jobInfo)
+        Log.d(TAG, "Scheduled periodic smart band sync: result=$result")
+    }
+
+    fun cancelPeriodicSync(context: Context) {
+        val scheduler = context.getSystemService(Context.JOB_SCHEDULER_SERVICE) as? JobScheduler ?: return
+        scheduler.cancel(JOB_ID)
+    }
+}
+
+class BandAutoSyncJobService : JobService() {
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var activeJob: Job? = null
+
+    override fun onStartJob(params: JobParameters?): Boolean {
+        val appCtx = applicationContext
+        activeJob = serviceScope.launch {
+            try {
+                val prefs = ThemePreferences(appCtx)
+                if (!prefs.isAutoSyncBandEnabled.first()) {
+                    jobFinished(params, false)
+                    return@launch
+                }
+                val uid = Firebase.auth.currentUser?.uid
+                if (uid.isNullOrBlank()) {
+                    jobFinished(params, false)
+                    return@launch
+                }
+
+                val hcManager = HealthConnectManager(appCtx)
+                val hcResult = hcManager.syncHealthData()
+                hcResult.onSuccess { hc ->
+                    val repository = VeloStrideRepository(appCtx)
+                    val elevationRepo = ElevationRepository()
+                    val existingIds = repository.fetchExistingWorkoutExternalIds(uid)
+                    val batch = BandSyncHelper.persistImportedBandWorkouts(
+                        repository = repository,
+                        elevationRepository = elevationRepo,
+                        userId = uid,
+                        profile = AthleteProfile(userId = uid),
+                        sessions = hc.importedExercises,
+                        existingExternalIds = existingIds
+                    )
+                    repository.upsertDailyHealthLog(
+                        uid,
+                        BandSyncHelper.buildDailyHealthLog(
+                            userId = uid,
+                            hc = hc,
+                            restingHrFallback = 54,
+                            vo2MaxFallback = 45.0,
+                            recoveryScore = 75
+                        )
+                    )
+                    prefs.setLastBandAutoSyncMs(System.currentTimeMillis())
+                    if (batch.newlyImportedCount > 0) {
+                        BandSyncNotifier.notifyNewBandWorkouts(appCtx, batch)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Background band sync skipped: ${e.message}")
+            } finally {
+                jobFinished(params, false)
+            }
+        }
+        return true
+    }
+
+    override fun onStopJob(params: JobParameters?): Boolean {
+        activeJob?.cancel()
+        return true
+    }
+
+    override fun onDestroy() {
+        serviceScope.cancel()
+        super.onDestroy()
+    }
+
+    private companion object {
+        const val TAG = "BandAutoSyncJob"
+    }
+}

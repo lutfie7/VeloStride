@@ -1,0 +1,265 @@
+{
+  "entities": {
+    "AthleteProfile": {
+      "title": "AthleteProfile",
+      "description": "Authenticated athlete profile and physiological training baselines.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Firebase Auth UID" },
+        "displayName": { "type": "string", "description": "Athlete display name" },
+        "photoUrl": { "type": "string", "description": "Optional profile avatar URL" },
+        "weeklyDistanceGoalKm": { "type": "number", "description": "Weekly distance target in kilometers" },
+        "maxHr": { "type": "integer", "description": "Maximum heart rate BPM" },
+        "restingHr": { "type": "integer", "description": "Resting heart rate BPM" },
+        "ftpWatts": { "type": "integer", "description": "Functional threshold power in watts" },
+        "totalDistanceMeters": { "type": "number", "description": "Cumulative distance in meters" },
+        "totalWorkouts": { "type": "integer", "description": "Cumulative workout count" },
+        "preferredSport": { "type": "string", "description": "Primary sport type" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp on creation" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp on update" }
+      },
+      "required": [
+        "userId",
+        "displayName",
+        "weeklyDistanceGoalKm",
+        "maxHr",
+        "restingHr",
+        "ftpWatts",
+        "totalDistanceMeters",
+        "totalWorkouts",
+        "preferredSport",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "WorkoutActivity": {
+      "title": "WorkoutActivity",
+      "description": "Recorded GPS and wearable telemetry workout activity.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "sportType": { "type": "string", "enum": ["RUN", "HIKE", "WALK", "TRAIL_RUN", "CYCLE", "WORKOUT", "GRAVEL_RIDE", "MTB", "SWIM", "BADMINTON", "YOGA", "ROWING", "ELLIPTICAL"] },
+        "distanceMeters": { "type": "number" },
+        "movingTimeSeconds": { "type": "integer" },
+        "elapsedTimeSeconds": { "type": "integer" },
+        "elevationGainMeters": { "type": "number" },
+        "avgPaceSecPerKm": { "type": "integer" },
+        "avgSpeedKmh": { "type": "number" },
+        "avgHeartRate": { "type": "integer" },
+        "maxHeartRate": { "type": "integer" },
+        "avgCadence": { "type": "integer" },
+        "calories": { "type": "integer" },
+        "relativeEffort": { "type": "integer" },
+        "perceivedExertion": { "type": "integer" },
+        "kudosCount": { "type": "integer" },
+        "kudosGiven": { "type": "boolean" },
+        "privateActivity": { "type": "boolean" },
+        "prCount": { "type": "integer" },
+        "hrZoneSeconds": { "type": "array", "description": "5-element array of seconds spent in HR zones Z1-Z5" },
+        "routePoints": { "type": "array", "description": "Downsampled GPS trackpoints" },
+        "splits": { "type": "array", "description": "Per-kilometer splits" },
+        "gearId": { "type": "string" },
+        "gearName": { "type": "string" },
+        "deviceName": { "type": "string" },
+        "elevationSource": { "type": "string" },
+        "externalId": { "type": "string" },
+        "aiInsight": { "type": "string" },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "userId",
+        "title",
+        "sportType",
+        "distanceMeters",
+        "movingTimeSeconds",
+        "elapsedTimeSeconds",
+        "elevationGainMeters",
+        "avgPaceSecPerKm",
+        "avgSpeedKmh",
+        "avgHeartRate",
+        "maxHeartRate",
+        "avgCadence",
+        "calories",
+        "relativeEffort",
+        "perceivedExertion",
+        "kudosCount",
+        "kudosGiven",
+        "privateActivity",
+        "prCount",
+        "hrZoneSeconds",
+        "routePoints",
+        "splits",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "SavedRoute": {
+      "title": "SavedRoute",
+      "description": "Custom planned route with waypoints and elevation estimate.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "sportType": { "type": "string" },
+        "surfaceType": { "type": "string" },
+        "distanceMeters": { "type": "number" },
+        "elevationGainMeters": { "type": "number" },
+        "estimatedMinutes": { "type": "integer" },
+        "waypoints": { "type": "array" },
+        "starred": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "name", "sportType", "surfaceType", "distanceMeters", "elevationGainMeters", "estimatedMinutes", "waypoints", "starred", "createdAt", "updatedAt"]
+    },
+    "GearItem": {
+      "title": "GearItem",
+      "description": "Shoes or bicycles with cumulative mileage tracking.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "brand": { "type": "string" },
+        "gearType": { "type": "string", "enum": ["SHOES", "BIKE"] },
+        "distanceMeters": { "type": "number" },
+        "maxDistanceMeters": { "type": "number" },
+        "primaryGear": { "type": "boolean" },
+        "retired": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "name", "brand", "gearType", "distanceMeters", "maxDistanceMeters", "primaryGear", "retired", "createdAt", "updatedAt"]
+    },
+    "PairedWearable": {
+      "title": "PairedWearable",
+      "description": "Paired BLE fitness wearable such as HUAWEI Band 11 Pro.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "macAddress": { "type": "string" },
+        "manufacturer": { "type": "string" },
+        "deviceCategory": { "type": "string" },
+        "batteryPercent": { "type": "integer" },
+        "supportsHr": { "type": "boolean" },
+        "supportsRsc": { "type": "boolean" },
+        "huaweiNative": { "type": "boolean" },
+        "lastSyncedLabel": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "name", "macAddress", "manufacturer", "deviceCategory", "batteryPercent", "supportsHr", "supportsRsc", "huaweiNative", "lastSyncedLabel", "createdAt", "updatedAt"]
+    },
+    "SegmentRecord": {
+      "title": "SegmentRecord",
+      "description": "Tracked athletic segment with PR and KOM/QOM benchmarks.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "sportType": { "type": "string" },
+        "distanceMeters": { "type": "number" },
+        "avgGradePercent": { "type": "number" },
+        "elevationGainMeters": { "type": "number" },
+        "prTimeSeconds": { "type": "integer" },
+        "komTimeSeconds": { "type": "integer" },
+        "attemptCount": { "type": "integer" },
+        "starred": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "name", "sportType", "distanceMeters", "avgGradePercent", "elevationGainMeters", "prTimeSeconds", "komTimeSeconds", "attemptCount", "starred", "createdAt", "updatedAt"]
+    },
+    "ChallengeGoal": {
+      "title": "ChallengeGoal",
+      "description": "Monthly or weekly fitness challenge progress.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "sportType": { "type": "string" },
+        "targetValue": { "type": "number" },
+        "currentValue": { "type": "number" },
+        "unit": { "type": "string" },
+        "periodLabel": { "type": "string" },
+        "joined": { "type": "boolean" },
+        "completed": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "title", "sportType", "targetValue", "currentValue", "unit", "periodLabel", "joined", "completed", "createdAt", "updatedAt"]
+    },
+    "DailyHealthLog": {
+      "title": "DailyHealthLog",
+      "description": "Synced daily health & sleep telemetry from Huawei Band 11 Pro via BLE and Health Connect.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "dateKey": { "type": "string" },
+        "steps": { "type": "integer" },
+        "distanceMetersToday": { "type": "number" },
+        "activeCalories": { "type": "integer" },
+        "totalCalories": { "type": "integer" },
+        "restingHr": { "type": "integer" },
+        "latestHr": { "type": "integer" },
+        "hrvRmssdMs": { "type": "number" },
+        "spo2Percent": { "type": "number" },
+        "sleepTotalMinutes": { "type": "integer" },
+        "sleepDeepMinutes": { "type": "integer" },
+        "sleepLightMinutes": { "type": "integer" },
+        "sleepRemMinutes": { "type": "integer" },
+        "sleepAwakeMinutes": { "type": "integer" },
+        "sleepScore": { "type": "integer" },
+        "vo2MaxEstimate": { "type": "number" },
+        "recoveryScore": { "type": "integer" },
+        "sourceDevice": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "userId", "dateKey", "steps", "activeCalories", "totalCalories",
+        "restingHr", "latestHr", "hrvRmssdMs", "sleepTotalMinutes",
+        "sleepDeepMinutes", "sleepLightMinutes", "sleepRemMinutes",
+        "sleepAwakeMinutes", "sleepScore", "vo2MaxEstimate", "recoveryScore",
+        "sourceDevice", "createdAt", "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/AthleteProfile" },
+      "description": "Athlete profile document scoped by Firebase Auth UID."
+    },
+    "/users/{userId}/workouts/{workoutId}": {
+      "schema": { "$ref": "#/entities/WorkoutActivity" },
+      "description": "User workout activities with GPS route, splits, HR zones, and AI insights."
+    },
+    "/users/{userId}/routes/{routeId}": {
+      "schema": { "$ref": "#/entities/SavedRoute" },
+      "description": "User custom planned routes."
+    },
+    "/users/{userId}/gear/{gearId}": {
+      "schema": { "$ref": "#/entities/GearItem" },
+      "description": "User shoes and bicycle gear mileage records."
+    },
+    "/users/{userId}/devices/{deviceId}": {
+      "schema": { "$ref": "#/entities/PairedWearable" },
+      "description": "User paired BLE wearables including Huawei Band 11 Pro."
+    },
+    "/users/{userId}/segments/{segmentId}": {
+      "schema": { "$ref": "#/entities/SegmentRecord" },
+      "description": "User tracked segments and PR/KOM times."
+    },
+    "/users/{userId}/challenges/{challengeId}": {
+      "schema": { "$ref": "#/entities/ChallengeGoal" },
+      "description": "User active fitness challenges."
+    },
+    "/users/{userId}/health_logs/{dateId}": {
+      "schema": { "$ref": "#/entities/DailyHealthLog" },
+      "description": "Daily health, steps, calories, HRV, and sleep stages synced from Huawei Band 11 Pro."
+    }
+  }
+}

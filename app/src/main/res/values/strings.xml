@@ -1,0 +1,12 @@
+<resources>
+    <string name="app_name">VeloStride</string>
+    <string name="tracking_channel_name">Activity Recording</string>
+    <string name="tracking_channel_desc">Live GPS and wearable heart rate tracking status</string>
+    <string name="nav_feed">Home</string>
+    <string name="nav_maps">Maps</string>
+    <string name="nav_record">Record</string>
+    <string name="nav_progress">Progress</string>
+    <string name="nav_devices">Devices</string>
+    <string name="sign_in_google">Sign in with Google</string>
+    <string name="sign_out">Sign out</string>
+</resources>

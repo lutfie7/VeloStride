@@ -1,0 +1,434 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 2. Hardened Primitives
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidTimestamp(ts) {
+      return ts is timestamp && ts <= request.time;
+    }
+
+    // 3. Entity Validation Helpers
+    function isValidAthleteProfile(data, userId) {
+      return data.userId == userId &&
+        data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80 &&
+        (!('photoUrl' in data) || (data.photoUrl is string && data.photoUrl.size() <= 500)) &&
+        data.weeklyDistanceGoalKm is number && data.weeklyDistanceGoalKm >= 1 && data.weeklyDistanceGoalKm <= 1000 &&
+        data.maxHr is int && data.maxHr >= 100 && data.maxHr <= 230 &&
+        data.restingHr is int && data.restingHr >= 30 && data.restingHr <= 120 &&
+        data.ftpWatts is int && data.ftpWatts >= 50 && data.ftpWatts <= 600 &&
+        data.totalDistanceMeters is number && data.totalDistanceMeters >= 0 && data.totalDistanceMeters <= 1000000000 &&
+        data.totalWorkouts is int && data.totalWorkouts >= 0 && data.totalWorkouts <= 1000000 &&
+        data.preferredSport is string && data.preferredSport.size() >= 1 && data.preferredSport.size() <= 30 &&
+        isValidTimestamp(data.createdAt) &&
+        isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidWorkoutActivity(data, userId) {
+      return data.userId == userId &&
+        data.title is string && data.title.size() >= 1 && data.title.size() <= 120 &&
+        data.sportType in ['RUN', 'HIKE', 'WALK', 'TRAIL_RUN', 'CYCLE', 'WORKOUT', 'RIDE', 'GRAVEL_RIDE', 'MTB', 'SWIM', 'BADMINTON', 'YOGA', 'ROWING', 'ELLIPTICAL', 'INDOOR_CARDIO'] &&
+        data.distanceMeters is number && data.distanceMeters >= 0 && data.distanceMeters <= 1000000 &&
+        data.movingTimeSeconds is int && data.movingTimeSeconds >= 0 && data.movingTimeSeconds <= 604800 &&
+        data.elapsedTimeSeconds is int && data.elapsedTimeSeconds >= 0 && data.elapsedTimeSeconds <= 604800 &&
+        data.elevationGainMeters is number && data.elevationGainMeters >= 0 && data.elevationGainMeters <= 50000 &&
+        data.avgPaceSecPerKm is int && data.avgPaceSecPerKm >= 0 && data.avgPaceSecPerKm <= 3600 &&
+        data.avgSpeedKmh is number && data.avgSpeedKmh >= 0 && data.avgSpeedKmh <= 200 &&
+        data.avgHeartRate is int && data.avgHeartRate >= 0 && data.avgHeartRate <= 240 &&
+        data.maxHeartRate is int && data.maxHeartRate >= 0 && data.maxHeartRate <= 240 &&
+        data.avgCadence is int && data.avgCadence >= 0 && data.avgCadence <= 300 &&
+        data.calories is int && data.calories >= 0 && data.calories <= 25000 &&
+        data.relativeEffort is int && data.relativeEffort >= 0 && data.relativeEffort <= 1000 &&
+        data.perceivedExertion is int && data.perceivedExertion >= 1 && data.perceivedExertion <= 10 &&
+        data.kudosCount is int && data.kudosCount >= 0 && data.kudosCount <= 1000000 &&
+        data.kudosGiven is bool &&
+        data.privateActivity is bool &&
+        data.prCount is int && data.prCount >= 0 && data.prCount <= 50 &&
+        data.hrZoneSeconds is list && data.hrZoneSeconds.size() == 5 &&
+        data.hrZoneSeconds[0] is int &&
+        data.routePoints is list && data.routePoints.size() <= 250 &&
+        (data.routePoints.size() == 0 || data.routePoints[0] is map) &&
+        data.splits is list && data.splits.size() <= 100 &&
+        (data.splits.size() == 0 || data.splits[0] is map) &&
+        (!('gearId' in data) || (data.gearId is string && data.gearId.size() <= 128)) &&
+        (!('gearName' in data) || (data.gearName is string && data.gearName.size() <= 80)) &&
+        (!('deviceName' in data) || (data.deviceName is string && data.deviceName.size() <= 80)) &&
+        (!('elevationSource' in data) || (data.elevationSource is string && data.elevationSource.size() <= 60)) &&
+        (!('externalId' in data) || (data.externalId is string && data.externalId.size() <= 128)) &&
+        (!('aiInsight' in data) || (data.aiInsight is string && data.aiInsight.size() <= 2500)) &&
+        (!('notes' in data) || (data.notes is string && data.notes.size() <= 500)) &&
+        isValidTimestamp(data.createdAt) &&
+        isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidSavedRoute(data, userId) {
+      return data.userId == userId &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 100 &&
+        data.sportType in ['RUN', 'HIKE', 'WALK', 'TRAIL_RUN', 'CYCLE', 'WORKOUT', 'RIDE', 'GRAVEL_RIDE', 'MTB', 'SWIM', 'BADMINTON', 'YOGA', 'ROWING', 'ELLIPTICAL', 'INDOOR_CARDIO'] &&
+        data.surfaceType is string && data.surfaceType.size() >= 1 && data.surfaceType.size() <= 40 &&
+        data.distanceMeters is number && data.distanceMeters >= 0 && data.distanceMeters <= 1000000 &&
+        data.elevationGainMeters is number && data.elevationGainMeters >= 0 && data.elevationGainMeters <= 50000 &&
+        data.estimatedMinutes is int && data.estimatedMinutes >= 0 && data.estimatedMinutes <= 10000 &&
+        data.waypoints is list && data.waypoints.size() <= 100 &&
+        (data.waypoints.size() == 0 || data.waypoints[0] is map) &&
+        data.starred is bool &&
+        isValidTimestamp(data.createdAt) &&
+        isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidGearItem(data, userId) {
+      return data.userId == userId &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 80 &&
+        data.brand is string && data.brand.size() >= 1 && data.brand.size() <= 60 &&
+        data.gearType in ['SHOES', 'BIKE'] &&
+        data.distanceMeters is number && data.distanceMeters >= 0 && data.distanceMeters <= 100000000 &&
+        data.maxDistanceMeters is number && data.maxDistanceMeters >= 1000 && data.maxDistanceMeters <= 100000000 &&
+        data.primaryGear is bool &&
+        data.retired is bool &&
+        isValidTimestamp(data.createdAt) &&
+        isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidPairedWearable(data, userId) {
+      return data.userId == userId &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 80 &&
+        data.macAddress is string && data.macAddress.size() >= 1 && data.macAddress.size() <= 40 &&
+        data.manufacturer is string && data.manufacturer.size() >= 1 && data.manufacturer.size() <= 60 &&
+        data.deviceCategory is string && data.deviceCategory.size() >= 1 && data.deviceCategory.size() <= 40 &&
+        data.batteryPercent is int && data.batteryPercent >= -1 && data.batteryPercent <= 100 &&
+        data.supportsHr is bool &&
+        data.supportsRsc is bool &&
+        data.huaweiNative is bool &&
+        data.lastSyncedLabel is string && data.lastSyncedLabel.size() <= 60 &&
+        isValidTimestamp(data.createdAt) &&
+        isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidSegmentRecord(data, userId) {
+      return data.userId == userId &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 100 &&
+        data.sportType in ['RUN', 'HIKE', 'WALK', 'TRAIL_RUN', 'CYCLE', 'WORKOUT', 'RIDE', 'GRAVEL_RIDE', 'MTB', 'SWIM', 'BADMINTON', 'YOGA', 'ROWING', 'ELLIPTICAL', 'INDOOR_CARDIO'] &&
+        data.distanceMeters is number && data.distanceMeters >= 50 && data.distanceMeters <= 200000 &&
+        data.avgGradePercent is number && data.avgGradePercent >= -30 && data.avgGradePercent <= 45 &&
+        data.elevationGainMeters is number && data.elevationGainMeters >= 0 && data.elevationGainMeters <= 10000 &&
+        data.prTimeSeconds is int && data.prTimeSeconds >= 1 && data.prTimeSeconds <= 86400 &&
+        data.komTimeSeconds is int && data.komTimeSeconds >= 1 && data.komTimeSeconds <= 86400 &&
+        data.attemptCount is int && data.attemptCount >= 1 && data.attemptCount <= 10000 &&
+        data.starred is bool &&
+        isValidTimestamp(data.createdAt) &&
+        isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidChallengeGoal(data, userId) {
+      return data.userId == userId &&
+        data.title is string && data.title.size() >= 1 && data.title.size() <= 100 &&
+        data.sportType is string && data.sportType.size() >= 1 && data.sportType.size() <= 30 &&
+        data.targetValue is number && data.targetValue > 0 && data.targetValue <= 100000 &&
+        data.currentValue is number && data.currentValue >= 0 && data.currentValue <= 100000 &&
+        data.unit is string && data.unit.size() >= 1 && data.unit.size() <= 20 &&
+        data.periodLabel is string && data.periodLabel.size() >= 1 && data.periodLabel.size() <= 40 &&
+        data.joined is bool &&
+        data.completed is bool &&
+        isValidTimestamp(data.createdAt) &&
+        isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidDailyHealthLog(data, userId) {
+      return data.userId == userId &&
+        data.dateKey is string && data.dateKey.size() >= 8 && data.dateKey.size() <= 20 &&
+        data.steps is int && data.steps >= 0 && data.steps <= 300000 &&
+        (!('distanceMetersToday' in data) || (data.distanceMetersToday is number && data.distanceMetersToday >= 0 && data.distanceMetersToday <= 1000000)) &&
+        data.activeCalories is int && data.activeCalories >= 0 && data.activeCalories <= 25000 &&
+        data.totalCalories is int && data.totalCalories >= 0 && data.totalCalories <= 30000 &&
+        data.restingHr is int && data.restingHr >= 0 && data.restingHr <= 200 &&
+        data.latestHr is int && data.latestHr >= 0 && data.latestHr <= 240 &&
+        data.hrvRmssdMs is number && data.hrvRmssdMs >= 0 && data.hrvRmssdMs <= 500 &&
+        (!('spo2Percent' in data) || (data.spo2Percent is number && data.spo2Percent >= 0 && data.spo2Percent <= 100)) &&
+        data.sleepTotalMinutes is int && data.sleepTotalMinutes >= 0 && data.sleepTotalMinutes <= 1440 &&
+        data.sleepDeepMinutes is int && data.sleepDeepMinutes >= 0 && data.sleepDeepMinutes <= 1440 &&
+        data.sleepLightMinutes is int && data.sleepLightMinutes >= 0 && data.sleepLightMinutes <= 1440 &&
+        data.sleepRemMinutes is int && data.sleepRemMinutes >= 0 && data.sleepRemMinutes <= 1440 &&
+        data.sleepAwakeMinutes is int && data.sleepAwakeMinutes >= 0 && data.sleepAwakeMinutes <= 1440 &&
+        data.sleepScore is int && data.sleepScore >= 0 && data.sleepScore <= 100 &&
+        data.vo2MaxEstimate is number && data.vo2MaxEstimate >= 0 && data.vo2MaxEstimate <= 100 &&
+        data.recoveryScore is int && data.recoveryScore >= 0 && data.recoveryScore <= 100 &&
+        data.sourceDevice is string && data.sourceDevice.size() >= 1 && data.sourceDevice.size() <= 80 &&
+        isValidTimestamp(data.createdAt) &&
+        isValidTimestamp(data.updatedAt);
+    }
+
+    // 4. User Profile Rules
+    match /users/{userId} {
+      allow get: if isOwner(userId) && isValidId(userId);
+      allow list: if false;
+
+      allow create: if isOwner(userId) &&
+        isValidId(userId) &&
+        incoming().keys().hasAll([
+          'userId', 'displayName', 'weeklyDistanceGoalKm', 'maxHr', 'restingHr',
+          'ftpWatts', 'totalDistanceMeters', 'totalWorkouts', 'preferredSport',
+          'createdAt', 'updatedAt'
+        ]) &&
+        incoming().keys().hasOnly([
+          'userId', 'displayName', 'photoUrl', 'weeklyDistanceGoalKm', 'maxHr',
+          'restingHr', 'ftpWatts', 'totalDistanceMeters', 'totalWorkouts',
+          'preferredSport', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidAthleteProfile(incoming(), userId);
+
+      allow update: if isOwner(userId) &&
+        isValidId(userId) &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        isValidAthleteProfile(incoming(), userId) &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'displayName', 'photoUrl', 'weeklyDistanceGoalKm', 'maxHr', 'restingHr',
+          'ftpWatts', 'totalDistanceMeters', 'totalWorkouts', 'preferredSport', 'updatedAt'
+        ]);
+
+      allow delete: if isOwner(userId) && isValidId(userId);
+
+      // 5. Workouts Subcollection
+      match /workouts/{workoutId} {
+        allow get: if isOwner(userId) && isValidId(workoutId);
+        allow list: if isOwner(userId);
+
+        allow create: if isOwner(userId) &&
+          isValidId(workoutId) &&
+          incoming().keys().hasAll([
+            'userId', 'title', 'sportType', 'distanceMeters', 'movingTimeSeconds',
+            'elapsedTimeSeconds', 'elevationGainMeters', 'avgPaceSecPerKm', 'avgSpeedKmh',
+            'avgHeartRate', 'maxHeartRate', 'avgCadence', 'calories', 'relativeEffort',
+            'perceivedExertion', 'kudosCount', 'kudosGiven', 'privateActivity', 'prCount',
+            'hrZoneSeconds', 'routePoints', 'splits', 'createdAt', 'updatedAt'
+          ]) &&
+          incoming().keys().hasOnly([
+            'userId', 'title', 'sportType', 'distanceMeters', 'movingTimeSeconds',
+            'elapsedTimeSeconds', 'elevationGainMeters', 'avgPaceSecPerKm', 'avgSpeedKmh',
+            'avgHeartRate', 'maxHeartRate', 'avgCadence', 'calories', 'relativeEffort',
+            'perceivedExertion', 'kudosCount', 'kudosGiven', 'privateActivity', 'prCount',
+            'hrZoneSeconds', 'routePoints', 'splits', 'gearId', 'gearName', 'deviceName',
+            'elevationSource', 'externalId', 'aiInsight', 'notes', 'createdAt', 'updatedAt'
+          ]) &&
+          isValidWorkoutActivity(incoming(), userId);
+
+        allow update: if isOwner(userId) &&
+          isValidId(workoutId) &&
+          incoming().userId == existing().userId &&
+          incoming().createdAt == existing().createdAt &&
+          isValidWorkoutActivity(incoming(), userId) &&
+          (
+            incoming().diff(existing()).affectedKeys().hasOnly(['kudosCount', 'kudosGiven', 'updatedAt']) ||
+            incoming().diff(existing()).affectedKeys().hasOnly(['aiInsight', 'updatedAt']) ||
+            incoming().diff(existing()).affectedKeys().hasOnly(['elevationGainMeters', 'routePoints', 'splits', 'elevationSource', 'updatedAt']) ||
+            incoming().diff(existing()).affectedKeys().hasOnly(['title', 'notes', 'privateActivity', 'gearId', 'gearName', 'updatedAt'])
+          );
+
+        allow delete: if isOwner(userId) && isValidId(workoutId);
+      }
+
+      // 6. Routes Subcollection
+      match /routes/{routeId} {
+        allow get: if isOwner(userId) && isValidId(routeId);
+        allow list: if isOwner(userId);
+
+        allow create: if isOwner(userId) &&
+          isValidId(routeId) &&
+          incoming().keys().hasAll([
+            'userId', 'name', 'sportType', 'surfaceType', 'distanceMeters',
+            'elevationGainMeters', 'estimatedMinutes', 'waypoints', 'starred',
+            'createdAt', 'updatedAt'
+          ]) &&
+          incoming().keys().hasOnly([
+            'userId', 'name', 'sportType', 'surfaceType', 'distanceMeters',
+            'elevationGainMeters', 'estimatedMinutes', 'waypoints', 'starred',
+            'createdAt', 'updatedAt'
+          ]) &&
+          isValidSavedRoute(incoming(), userId);
+
+        allow update: if isOwner(userId) &&
+          isValidId(routeId) &&
+          incoming().userId == existing().userId &&
+          incoming().createdAt == existing().createdAt &&
+          isValidSavedRoute(incoming(), userId) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'starred', 'updatedAt']);
+
+        allow delete: if isOwner(userId) && isValidId(routeId);
+      }
+
+      // 7. Gear Subcollection
+      match /gear/{gearId} {
+        allow get: if isOwner(userId) && isValidId(gearId);
+        allow list: if isOwner(userId);
+
+        allow create: if isOwner(userId) &&
+          isValidId(gearId) &&
+          incoming().keys().hasAll([
+            'userId', 'name', 'brand', 'gearType', 'distanceMeters',
+            'maxDistanceMeters', 'primaryGear', 'retired', 'createdAt', 'updatedAt'
+          ]) &&
+          incoming().keys().hasOnly([
+            'userId', 'name', 'brand', 'gearType', 'distanceMeters',
+            'maxDistanceMeters', 'primaryGear', 'retired', 'createdAt', 'updatedAt'
+          ]) &&
+          isValidGearItem(incoming(), userId);
+
+        allow update: if isOwner(userId) &&
+          isValidId(gearId) &&
+          incoming().userId == existing().userId &&
+          incoming().createdAt == existing().createdAt &&
+          isValidGearItem(incoming(), userId) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['distanceMeters', 'primaryGear', 'retired', 'name', 'maxDistanceMeters', 'updatedAt']);
+
+        allow delete: if isOwner(userId) && isValidId(gearId);
+      }
+
+      // 8. Devices (Paired Wearables) Subcollection
+      match /devices/{deviceId} {
+        allow get: if isOwner(userId) && isValidId(deviceId);
+        allow list: if isOwner(userId);
+
+        allow create: if isOwner(userId) &&
+          isValidId(deviceId) &&
+          incoming().keys().hasAll([
+            'userId', 'name', 'macAddress', 'manufacturer', 'deviceCategory',
+            'batteryPercent', 'supportsHr', 'supportsRsc', 'huaweiNative',
+            'lastSyncedLabel', 'createdAt', 'updatedAt'
+          ]) &&
+          incoming().keys().hasOnly([
+            'userId', 'name', 'macAddress', 'manufacturer', 'deviceCategory',
+            'batteryPercent', 'supportsHr', 'supportsRsc', 'huaweiNative',
+            'lastSyncedLabel', 'createdAt', 'updatedAt'
+          ]) &&
+          isValidPairedWearable(incoming(), userId);
+
+        allow update: if isOwner(userId) &&
+          isValidId(deviceId) &&
+          incoming().userId == existing().userId &&
+          incoming().createdAt == existing().createdAt &&
+          isValidPairedWearable(incoming(), userId) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['batteryPercent', 'supportsHr', 'supportsRsc', 'lastSyncedLabel', 'updatedAt']);
+
+        allow delete: if isOwner(userId) && isValidId(deviceId);
+      }
+
+      // 9. Segments Subcollection
+      match /segments/{segmentId} {
+        allow get: if isOwner(userId) && isValidId(segmentId);
+        allow list: if isOwner(userId);
+
+        allow create: if isOwner(userId) &&
+          isValidId(segmentId) &&
+          incoming().keys().hasAll([
+            'userId', 'name', 'sportType', 'distanceMeters', 'avgGradePercent',
+            'elevationGainMeters', 'prTimeSeconds', 'komTimeSeconds', 'attemptCount',
+            'starred', 'createdAt', 'updatedAt'
+          ]) &&
+          incoming().keys().hasOnly([
+            'userId', 'name', 'sportType', 'distanceMeters', 'avgGradePercent',
+            'elevationGainMeters', 'prTimeSeconds', 'komTimeSeconds', 'attemptCount',
+            'starred', 'createdAt', 'updatedAt'
+          ]) &&
+          isValidSegmentRecord(incoming(), userId);
+
+        allow update: if isOwner(userId) &&
+          isValidId(segmentId) &&
+          incoming().userId == existing().userId &&
+          incoming().createdAt == existing().createdAt &&
+          isValidSegmentRecord(incoming(), userId) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['starred', 'prTimeSeconds', 'attemptCount', 'updatedAt']);
+
+        allow delete: if isOwner(userId) && isValidId(segmentId);
+      }
+
+      // 10. Challenges Subcollection
+      match /challenges/{challengeId} {
+        allow get: if isOwner(userId) && isValidId(challengeId);
+        allow list: if isOwner(userId);
+
+        allow create: if isOwner(userId) &&
+          isValidId(challengeId) &&
+          incoming().keys().hasAll([
+            'userId', 'title', 'sportType', 'targetValue', 'currentValue',
+            'unit', 'periodLabel', 'joined', 'completed', 'createdAt', 'updatedAt'
+          ]) &&
+          incoming().keys().hasOnly([
+            'userId', 'title', 'sportType', 'targetValue', 'currentValue',
+            'unit', 'periodLabel', 'joined', 'completed', 'createdAt', 'updatedAt'
+          ]) &&
+          isValidChallengeGoal(incoming(), userId);
+
+        allow update: if isOwner(userId) &&
+          isValidId(challengeId) &&
+          incoming().userId == existing().userId &&
+          incoming().createdAt == existing().createdAt &&
+          isValidChallengeGoal(incoming(), userId) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['currentValue', 'joined', 'completed', 'updatedAt']);
+
+        allow delete: if isOwner(userId) && isValidId(challengeId);
+      }
+
+      // 11. Daily Health & Sleep Logs Subcollection
+      match /health_logs/{dateId} {
+        allow get: if isOwner(userId) && isValidId(dateId);
+        allow list: if isOwner(userId);
+
+        allow create: if isOwner(userId) &&
+          isValidId(dateId) &&
+          incoming().keys().hasAll([
+            'userId', 'dateKey', 'steps', 'activeCalories', 'totalCalories',
+            'restingHr', 'latestHr', 'hrvRmssdMs', 'sleepTotalMinutes',
+            'sleepDeepMinutes', 'sleepLightMinutes', 'sleepRemMinutes',
+            'sleepAwakeMinutes', 'sleepScore', 'vo2MaxEstimate', 'recoveryScore',
+            'sourceDevice', 'createdAt', 'updatedAt'
+          ]) &&
+          incoming().keys().hasOnly([
+            'userId', 'dateKey', 'steps', 'distanceMetersToday', 'activeCalories', 'totalCalories',
+            'restingHr', 'latestHr', 'hrvRmssdMs', 'spo2Percent', 'sleepTotalMinutes',
+            'sleepDeepMinutes', 'sleepLightMinutes', 'sleepRemMinutes',
+            'sleepAwakeMinutes', 'sleepScore', 'vo2MaxEstimate', 'recoveryScore',
+            'sourceDevice', 'createdAt', 'updatedAt'
+          ]) &&
+          isValidDailyHealthLog(incoming(), userId);
+
+        allow update: if isOwner(userId) &&
+          isValidId(dateId) &&
+          incoming().userId == existing().userId &&
+          incoming().createdAt == existing().createdAt &&
+          isValidDailyHealthLog(incoming(), userId) &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'steps', 'distanceMetersToday', 'activeCalories', 'totalCalories', 'restingHr', 'latestHr',
+            'hrvRmssdMs', 'spo2Percent', 'sleepTotalMinutes', 'sleepDeepMinutes', 'sleepLightMinutes',
+            'sleepRemMinutes', 'sleepAwakeMinutes', 'sleepScore', 'vo2MaxEstimate',
+            'recoveryScore', 'sourceDevice', 'updatedAt'
+          ]);
+
+        allow delete: if isOwner(userId) && isValidId(dateId);
+      }
+    }
+  }
+}

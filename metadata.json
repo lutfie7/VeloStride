@@ -1,0 +1,6 @@
+{
+  "name": "VeloStride",
+  "description": "GPS activity tracker & athletic performance platform with native BLE wearable & Huawei Band 11 Pro pairing, Athlete Intelligence, routes, segments, training load, and cloud sync.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

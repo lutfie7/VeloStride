@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<resources>
+    <string name="firestore_database_id" translatable="false">ai-studio-android-velostri-80450415-3a4c-468b-b7d6-946e313e0135</string>
+    <string name="recaptcha_site_key" translatable="false">6LffAi0uAAAAAHov59Z5lmqQIn5l8nEwxJMbWB61</string>
+</resources>
