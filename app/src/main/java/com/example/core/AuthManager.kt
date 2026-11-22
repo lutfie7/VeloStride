@@ -8,6 +8,8 @@ import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
+import androidx.credentials.exceptions.GetCredentialException
+import androidx.credentials.exceptions.NoCredentialException
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
@@ -129,11 +131,36 @@ fun onGoogleSignInClicked(
                 onAuthError("Unexpected credential type received.")
             }
         } catch (e: GetCredentialCancellationException) {
-            Log.w(AUTH_TAG, "Google Sign-In flow cancelled or dismissed: ${e.message}", e)
-            onAuthCancelled()
+            val detail = e.errorMessage?.toString()?.takeIf { it.isNotBlank() }
+                ?: e.message.orEmpty()
+            Log.w(AUTH_TAG, "Google Sign-In flow cancelled or dismissed: $detail", e)
+            val isManualCancel = detail.contains("user", ignoreCase = true) &&
+                !detail.contains("28444") &&
+                !detail.contains("developer", ignoreCase = true) &&
+                !detail.contains("blocked", ignoreCase = true)
+            if (isManualCancel) {
+                onAuthCancelled()
+            } else {
+                onAuthError(
+                    if (detail.isNotBlank()) "Google Sign-In ditutup: $detail"
+                    else "Google Sign-In gagal atau ditutup otomatis. Pastikan SHA-1 keystore cocok (DEBUG_KEYSTORE_BASE64) dan Play Services aktif."
+                )
+            }
+        } catch (e: NoCredentialException) {
+            val detail = e.errorMessage?.toString()?.takeIf { it.isNotBlank() }
+                ?: e.message.orEmpty()
+            Log.w(AUTH_TAG, "No Google credential available: $detail", e)
+            onAuthError(
+                if (detail.isNotBlank()) "Akun Google tidak tersedia / ditolak: $detail"
+                else "Tidak ada akun Google yang cocok di perangkat atau SHA-1 keystore belum sesuai."
+            )
         } catch (e: Exception) {
-            Log.e(AUTH_TAG, "Google Sign-In failed", e)
-            onAuthError(e.localizedMessage ?: "Sign in failed.")
+            val detail = (e as? GetCredentialException)?.errorMessage?.toString()?.takeIf { it.isNotBlank() }
+                ?: e.localizedMessage?.takeIf { it.isNotBlank() }
+                ?: e.message?.takeIf { it.isNotBlank() }
+                ?: e::class.java.simpleName
+            Log.e(AUTH_TAG, "Google Sign-In failed: $detail", e)
+            onAuthError(detail)
         }
     }
 }
