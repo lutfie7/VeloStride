@@ -136,7 +136,7 @@ object BandSyncHelper {
         }
         val splits = mutableListOf<SplitKm>()
         var cumDistM = 0.0
-        var splitEleGain = 0.0
+        var splitNetEle = 0.0
         val hrBucket = mutableListOf<Int>()
         var nextKmThreshold = 1000.0
         var kmIdx = 1
@@ -148,8 +148,7 @@ object BandSyncHelper {
             val prev = points[i - 1]
             val curr = points[i]
             cumDistM += Formatters.haversineMeters(prev.lat, prev.lng, curr.lat, curr.lng)
-            val eleDiff = curr.ele - prev.ele
-            if (eleDiff > 0.0) splitEleGain += eleDiff
+            splitNetEle += (curr.ele - prev.ele)
             if (curr.hr > 0) hrBucket.add(curr.hr)
 
             if (cumDistM >= nextKmThreshold && splits.size < 99) {
@@ -157,11 +156,11 @@ object BandSyncHelper {
                     SplitKm(
                         km = kmIdx++,
                         paceSec = avgPace,
-                        eleDiff = (splitEleGain * 10.0).roundToInt() / 10.0,
+                        eleDiff = (splitNetEle * 10.0).roundToInt() / 10.0,
                         avgHr = if (hrBucket.isNotEmpty()) hrBucket.average().roundToInt() else fallbackAvgHr
                     )
                 )
-                splitEleGain = 0.0
+                splitNetEle = 0.0
                 hrBucket.clear()
                 nextKmThreshold += 1000.0
             }
@@ -171,7 +170,7 @@ object BandSyncHelper {
                 SplitKm(
                     km = 1,
                     paceSec = avgPace,
-                    eleDiff = (splitEleGain * 10.0).roundToInt() / 10.0,
+                    eleDiff = (splitNetEle * 10.0).roundToInt() / 10.0,
                     avgHr = if (hrBucket.isNotEmpty()) hrBucket.average().roundToInt() else fallbackAvgHr
                 )
             )

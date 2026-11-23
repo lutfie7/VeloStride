@@ -101,6 +101,7 @@ class WorkoutRecorderController(
     private var nextSplitTargetMeters = 1000.0
     private var splitStartSeconds = 0L
     private var splitStartElevation = 0.0
+    private var splitStartAltitude: Double? = null
     private var splitHrSum = 0L
     private var splitHrCount = 0L
 
@@ -176,14 +177,22 @@ class WorkoutRecorderController(
         if (current.phase == RecordingPhase.IDLE) return
         val splitTime = (current.movingSeconds - splitStartSeconds).coerceAtLeast(1L).toInt()
         val splitAvgHr = if (splitHrCount > 0) (splitHrSum / splitHrCount).toInt() else current.liveHeartRate
+        val startAlt = splitStartAltitude
+        val currentAlt = current.currentAltitudeMeters
+        val netEle = if (startAlt != null && currentAlt != null && currentAlt != 0.0) {
+            ((currentAlt - startAlt) * 10.0).roundToInt() / 10.0
+        } else {
+            ((current.elevationGainMeters - splitStartElevation) * 10.0).roundToInt() / 10.0
+        }
         val newSplit = SplitKm(
             km = current.splits.size + 1,
             paceSec = splitTime,
-            eleDiff = (current.elevationGainMeters - splitStartElevation),
+            eleDiff = netEle,
             avgHr = splitAvgHr
         )
         splitStartSeconds = current.movingSeconds
         splitStartElevation = current.elevationGainMeters
+        if (currentAlt != null && currentAlt != 0.0) splitStartAltitude = currentAlt
         splitHrSum = 0L
         splitHrCount = 0L
         _state.update { it.copy(splits = it.splits + newSplit) }
@@ -448,19 +457,29 @@ class WorkoutRecorderController(
                     current.trackPoints
                 }
 
+                if (splitStartAltitude == null && pointAlt != 0.0) {
+                    splitStartAltitude = pointAlt
+                }
                 val updatedSplits = current.splits.toMutableList()
                 if (newDist >= nextSplitTargetMeters) {
                     val splitTime = (current.movingSeconds - splitStartSeconds).coerceAtLeast(1L).toInt()
                     val splitHr = if (splitHrCount > 0) (splitHrSum / splitHrCount).toInt() else current.liveHeartRate
+                    val startAlt = splitStartAltitude
+                    val netEle = if (startAlt != null && pointAlt != 0.0) {
+                        ((pointAlt - startAlt) * 10.0).roundToInt() / 10.0
+                    } else {
+                        ((newEle - splitStartElevation) * 10.0).roundToInt() / 10.0
+                    }
                     updatedSplits += SplitKm(
                         km = updatedSplits.size + 1,
                         paceSec = splitTime,
-                        eleDiff = newEle - splitStartElevation,
+                        eleDiff = netEle,
                         avgHr = splitHr
                     )
                     nextSplitTargetMeters += 1000.0
                     splitStartSeconds = current.movingSeconds
                     splitStartElevation = newEle
+                    if (pointAlt != 0.0) splitStartAltitude = pointAlt
                     splitHrSum = 0L
                     splitHrCount = 0L
                 }
@@ -495,6 +514,7 @@ class WorkoutRecorderController(
         nextSplitTargetMeters = 1000.0
         splitStartSeconds = 0L
         splitStartElevation = 0.0
+        splitStartAltitude = null
         splitHrSum = 0L
         splitHrCount = 0L
     }

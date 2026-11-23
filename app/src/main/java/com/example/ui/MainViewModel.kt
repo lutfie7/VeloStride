@@ -797,7 +797,7 @@ class MainViewModel(
         var cumDistM = 0.0
         var splitStartDistM = 0.0
         var splitStartTimeMs = timestampsMs.firstOrNull()?.takeIf { it > 0L }
-        var splitEleGain = 0.0
+        var splitNetEle = 0.0
         val hrBucket = mutableListOf<Int>()
         var nextKmThreshold = 1000.0
         var kmIdx = 1
@@ -806,8 +806,7 @@ class MainViewModel(
             val prev = points[i - 1]
             val curr = points[i]
             cumDistM += Formatters.haversineMeters(prev.lat, prev.lng, curr.lat, curr.lng)
-            val eleDiff = curr.ele - prev.ele
-            if (eleDiff > 0.0) splitEleGain += eleDiff
+            splitNetEle += (curr.ele - prev.ele)
             if (curr.hr > 0) hrBucket.add(curr.hr)
 
             if (cumDistM >= nextKmThreshold && splits.size < 99) {
@@ -822,13 +821,13 @@ class MainViewModel(
                     SplitKm(
                         km = kmIdx++,
                         paceSec = (segSec / segDistKm).roundToInt().coerceIn(60, 3600),
-                        eleDiff = (splitEleGain * 10.0).roundToInt() / 10.0,
+                        eleDiff = (splitNetEle * 10.0).roundToInt() / 10.0,
                         avgHr = if (hrBucket.isNotEmpty()) hrBucket.average().roundToInt() else 0
                     )
                 )
                 splitStartDistM = cumDistM
                 splitStartTimeMs = endTimeMs
-                splitEleGain = 0.0
+                splitNetEle = 0.0
                 hrBucket.clear()
                 nextKmThreshold += 1000.0
             }

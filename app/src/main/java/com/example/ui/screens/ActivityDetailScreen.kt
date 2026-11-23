@@ -56,6 +56,7 @@ import com.example.core.Formatters
 import com.example.core.GpxSerializer
 import com.example.core.ShareCardConfig
 import com.example.data.model.UiState
+import com.example.data.repository.ElevationRepository
 import com.example.ui.MainViewModel
 import com.example.ui.components.ElevationAndHrChart
 import com.example.ui.components.FlyoverMapDialog
@@ -65,9 +66,11 @@ import com.example.ui.components.RoutePolylineCanvas
 import com.example.ui.components.ShareActivityDialog
 import com.example.ui.components.SportBadge
 import com.example.ui.theme.CrimsonPulse
+import com.example.ui.theme.EmeraldPeak
 import com.example.ui.theme.JetBrainsMonoFontFamily
 import com.example.ui.theme.SignalCyan
 import com.example.ui.theme.VeloOrange
+import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -346,9 +349,19 @@ fun ActivityDetailScreen(
             }
 
             // Splits
-            val splits = workout.decodedSplits
-            if (splits.isNotEmpty()) {
+            val rawSplits = workout.decodedSplits
+            if (rawSplits.isNotEmpty()) {
                 item {
+                    val splits = remember(workout.id, rawSplits, workout.routePoints) {
+                        val pts = workout.decodedPoints
+                        val hasNegativeInSaved = rawSplits.any { it.eleDiff < 0.0 }
+                        val hasTrackDescent = pts.size >= 2 && (1 until pts.size).any { pts[it].ele < pts[it - 1].ele - 0.5 }
+                        if (!hasNegativeInSaved && hasTrackDescent) {
+                            ElevationRepository().recomputeSplitElevations(pts, rawSplits)
+                        } else {
+                            rawSplits
+                        }
+                    }
                     Card(
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                         shape = RoundedCornerShape(18.dp)
@@ -362,11 +375,22 @@ fun ActivityDetailScreen(
                             ) {
                                 Text("KM", style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(40.dp))
                                 Text("PACE", style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(72.dp))
-                                Text("ELEV", style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(56.dp))
+                                Text("ELEV", style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(64.dp))
                                 Text("AVG HR", style = MaterialTheme.typography.labelSmall)
                             }
                             HorizontalDivider(Modifier.padding(vertical = 6.dp))
                             splits.forEach { sp ->
+                                val eleRounded = sp.eleDiff.roundToInt()
+                                val eleText = when {
+                                    eleRounded > 0 -> "+${eleRounded}m"
+                                    eleRounded < 0 -> "${eleRounded}m"
+                                    else -> "0m"
+                                }
+                                val eleColor = when {
+                                    eleRounded > 0 -> EmeraldPeak
+                                    eleRounded < 0 -> SignalCyan
+                                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                }
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -375,7 +399,12 @@ fun ActivityDetailScreen(
                                 ) {
                                     Text("${sp.km}", fontFamily = JetBrainsMonoFontFamily, modifier = Modifier.width(40.dp))
                                     Text(Formatters.formatPaceShort(sp.paceSec), fontFamily = JetBrainsMonoFontFamily, modifier = Modifier.width(72.dp))
-                                    Text("${sp.eleDiff.toInt()}m", fontFamily = JetBrainsMonoFontFamily, modifier = Modifier.width(56.dp))
+                                    Text(
+                                        text = eleText,
+                                        fontFamily = JetBrainsMonoFontFamily,
+                                        color = eleColor,
+                                        modifier = Modifier.width(64.dp)
+                                    )
                                     Text(if (sp.avgHr > 0) "${sp.avgHr} bpm" else "--", fontFamily = JetBrainsMonoFontFamily, color = CrimsonPulse)
                                 }
                             }
@@ -399,13 +428,20 @@ fun ActivityDetailScreen(
     if (showFlyoverDialog && workout != null) {
         FlyoverMapDialog(
             workout = workout,
-            onShareFrame = { progress ->
+            onShareFrame = { progress, ratio ->
                 scope.launch {
-                    val backdrop = ActivityShareHelper.fetchShareCardMapBackdrop(workout, darkMap = true)
+                    val cfg = ShareCardConfig(showMap = true, ratio = ratio)
+                    val (boxW, boxH) = ActivityShareHelper.computeMapBoxSize(cfg)
+                    val backdrop = ActivityShareHelper.fetchShareCardMapBackdrop(
+                        workout = workout,
+                        darkMap = true,
+                        boxWidth = boxW,
+                        boxHeight = boxH
+                    )
                     ActivityShareHelper.shareAsImageCard(
                         context = context,
                         workout = workout,
-                        config = ShareCardConfig(showMap = true),
+                        config = cfg,
                         mapBackdrop = backdrop,
                         progressFraction = progress
                     )

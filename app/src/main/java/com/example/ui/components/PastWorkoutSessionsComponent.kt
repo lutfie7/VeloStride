@@ -3,6 +3,7 @@ package com.example.ui.components
 import android.graphics.Bitmap
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -26,6 +28,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.AspectRatio
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Favorite
@@ -79,6 +82,7 @@ import com.example.core.ActivityShareHelper
 import com.example.core.Formatters
 import com.example.core.GpxSerializer
 import com.example.core.ShareCardConfig
+import com.example.core.ShareCardRatio
 import com.example.core.ShareCardStyle
 import com.example.data.model.WorkoutActivity
 import com.example.data.model.WorkoutHistoryStats
@@ -412,19 +416,29 @@ fun ShareActivityDialog(
         )
     }
     var mapBackdrop by remember(workout.id) { mutableStateOf<Bitmap?>(null) }
-    var loadedBackdropStyle by remember(workout.id) { mutableStateOf<Boolean?>(null) }
+    var loadedBackdropKey by remember(workout.id) { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(workout.id, config.style, config.showMap) {
-        if (config.showMap && !config.style.isTransparent && hasGpsPoints) {
+    val backdropBoxSize = remember(config, activeTab) {
+        val effective = if (activeTab == 1) config.copy(showMap = true) else config
+        ActivityShareHelper.computeMapBoxSize(effective)
+    }
+
+    LaunchedEffect(workout.id, config.style, config.ratio, config.showMap, activeTab, backdropBoxSize) {
+        val needMap = config.showMap || activeTab == 1
+        if (needMap && !config.style.isTransparent && hasGpsPoints) {
             val needDark = config.style.isDarkMap
-            if (loadedBackdropStyle != needDark || mapBackdrop == null) {
+            val (boxW, boxH) = backdropBoxSize
+            val key = "${needDark}_${boxW}x${boxH}"
+            if (loadedBackdropKey != key || mapBackdrop == null) {
                 val bmp = ActivityShareHelper.fetchShareCardMapBackdrop(
                     workout = workout,
-                    darkMap = needDark
+                    darkMap = needDark,
+                    boxWidth = boxW,
+                    boxHeight = boxH
                 )
                 if (bmp != null) {
                     mapBackdrop = bmp
-                    loadedBackdropStyle = needDark
+                    loadedBackdropKey = key
                 }
             }
         }
@@ -508,11 +522,13 @@ fun ShareActivityDialog(
                     if (activeTab == 1 && hasGpsPoints) {
                         FlyoverMapAnimator(
                             workout = workout,
-                            onShareSnapshot = { progress ->
+                            selectedRatio = config.ratio,
+                            onRatioChange = { nextRatio -> config = config.copy(ratio = nextRatio) },
+                            onShareSnapshot = { progress, snapRatio ->
                                 ActivityShareHelper.shareAsImageCard(
                                     context = context,
                                     workout = workout,
-                                    config = config.copy(showMap = true),
+                                    config = config.copy(showMap = true, ratio = snapRatio),
                                     mapBackdrop = if (config.style.isTransparent) null else mapBackdrop,
                                     progressFraction = progress
                                 )
@@ -520,44 +536,76 @@ fun ShareActivityDialog(
                             }
                         )
                     } else {
-                        // Card Preview (with subtle checkerboard when Transparent style is active)
+                        // Card Preview sized to 1:1, 16:9, or 9:16 (with checkerboard when Transparent)
+                        val previewStageModifier = if (config.ratio == ShareCardRatio.LANDSCAPE_16_9) {
+                            Modifier
+                                .fillMaxWidth()
+                                .aspectRatio(config.ratio.aspectFloat, matchHeightConstraintsFirst = false)
+                        } else {
+                            Modifier
+                                .fillMaxHeight()
+                                .aspectRatio(config.ratio.aspectFloat, matchHeightConstraintsFirst = true)
+                        }
                         Box(
                             contentAlignment = Alignment.Center,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .heightIn(max = 310.dp)
+                                .height(256.dp)
                                 .clip(RoundedCornerShape(14.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.28f))
                         ) {
-                            if (config.style.isTransparent) {
-                                Canvas(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .aspectRatio(1080f / 1350f)
-                                ) {
-                                    val cell = 20f
-                                    val cols = (size.width / cell).toInt() + 1
-                                    val rows = (size.height / cell).toInt() + 1
-                                    for (r in 0..rows) {
-                                        for (c in 0..cols) {
-                                            val dark = (r + c) % 2 == 0
-                                            drawRect(
-                                                color = if (dark) Color(0xFF1E293B) else Color(0xFF334155),
-                                                topLeft = Offset(c * cell, r * cell),
-                                                size = Size(cell, cell)
-                                            )
+                            Box(
+                                modifier = previewStageModifier
+                                    .clip(RoundedCornerShape(12.dp))
+                            ) {
+                                if (config.style.isTransparent) {
+                                    Canvas(modifier = Modifier.fillMaxSize()) {
+                                        val cell = 20f
+                                        val cols = (size.width / cell).toInt() + 1
+                                        val rows = (size.height / cell).toInt() + 1
+                                        for (r in 0..rows) {
+                                            for (c in 0..cols) {
+                                                val dark = (r + c) % 2 == 0
+                                                drawRect(
+                                                    color = if (dark) Color(0xFF1E293B) else Color(0xFF334155),
+                                                    topLeft = Offset(c * cell, r * cell),
+                                                    size = Size(cell, cell)
+                                                )
+                                            }
                                         }
                                     }
                                 }
+                                Image(
+                                    bitmap = previewBitmap,
+                                    contentDescription = "Shareable activity card preview",
+                                    contentScale = ContentScale.Fit,
+                                    modifier = Modifier.fillMaxSize()
+                                )
                             }
-                            Image(
-                                bitmap = previewBitmap,
-                                contentDescription = "Shareable activity card preview",
-                                contentScale = ContentScale.Fit,
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .aspectRatio(1080f / 1350f)
-                                    .clip(RoundedCornerShape(14.dp))
+                        }
+
+                        // Ratio Picker (1:1, 16:9, 9:16)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                Icons.Rounded.AspectRatio,
+                                contentDescription = null,
+                                tint = SignalCyan,
+                                modifier = Modifier.size(16.dp)
                             )
+                            Text("Rasio", style = MaterialTheme.typography.labelLarge)
+                            Spacer(Modifier.width(2.dp))
+                            ShareCardRatio.entries.forEach { ratio ->
+                                FilterChip(
+                                    selected = config.ratio == ratio,
+                                    onClick = { config = config.copy(ratio = ratio) },
+                                    label = { Text(ratio.label, maxLines = 1) },
+                                    modifier = Modifier.testTag("share_ratio_${ratio.fileTag}")
+                                )
+                            }
                         }
 
                         // Style Picker
@@ -670,7 +718,7 @@ fun ShareActivityDialog(
                         ) {
                             Icon(Icons.Rounded.Image, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(8.dp))
-                            Text("Share Image Card (${config.style.label})")
+                            Text("Share Image Card (${config.style.label} • ${config.ratio.label})")
                         }
 
                         OutlinedButton(

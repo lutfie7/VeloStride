@@ -60,8 +60,8 @@ class MapProjectionTest {
         val lightTiles = MapProjection.visibleTiles(viewport, 800f, 500f, darkTheme = false)
 
         assertTrue(darkTiles.isNotEmpty())
-        assertTrue(darkTiles.all { it.url.contains("dark_all/14/") })
+        assertTrue(darkTiles.all { it.url.startsWith("https://tile.openstreetmap.org/14/") && it.url.endsWith(".png") })
         assertTrue(lightTiles.isNotEmpty())
-        assertTrue(lightTiles.all { it.url.contains("rastertiles/voyager/14/") })
+        assertTrue(lightTiles.all { it.url.startsWith("https://tile.openstreetmap.org/14/") && it.url.endsWith(".png") })
     }
 }

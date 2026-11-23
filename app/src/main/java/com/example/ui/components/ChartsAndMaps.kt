@@ -36,6 +36,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
@@ -71,6 +73,17 @@ import com.example.ui.theme.Zone4Color
 import com.example.ui.theme.Zone5Color
 import kotlin.math.roundToInt
 
+private val DarkMapColorFilter = ColorFilter.colorMatrix(
+    ColorMatrix(
+        floatArrayOf(
+            0.505f, -1.258f, -0.127f, 0f, 232f,
+            -0.375f, -0.378f, -0.127f, 0f, 232f,
+            -0.375f, -1.258f, 0.753f, 0f, 232f,
+            0f, 0f, 0f, 1f, 0f
+        )
+    )
+)
+
 @Composable
 fun MapTileBackground(
     viewport: MapViewport,
@@ -96,7 +109,7 @@ fun MapTileBackground(
                 val request = remember(tile.url) {
                     ImageRequest.Builder(context)
                         .data(tile.url)
-                        .addHeader("User-Agent", "VeloStride/1.0 (Android Fitness Tracker)")
+                        .addHeader("User-Agent", "VeloStride/1.0 (Android; com.aistudio.velostride.kxqrmz)")
                         .crossfade(true)
                         .build()
                 }
@@ -104,6 +117,7 @@ fun MapTileBackground(
                     model = request,
                     contentDescription = null,
                     contentScale = ContentScale.FillBounds,
+                    colorFilter = if (darkTheme) DarkMapColorFilter else null,
                     modifier = Modifier
                         .offset { IntOffset(tile.leftPx.roundToInt(), tile.topPx.roundToInt()) }
                         .size(sizeDp)
@@ -133,7 +147,7 @@ fun MapAttributionBadge(
         modifier = modifier
     ) {
         Text(
-            text = "© CARTO • OSM",
+            text = "© OpenStreetMap",
             fontSize = 9.sp,
             color = if (darkTheme) Color.White.copy(alpha = 0.78f) else Color(0xFF334155),
             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)

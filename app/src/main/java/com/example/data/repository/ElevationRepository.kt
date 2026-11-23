@@ -1,6 +1,7 @@
 package com.example.data.repository
 
 import android.util.Log
+import com.example.core.Formatters
 import com.example.data.model.SplitKm
 import com.example.data.model.TrackPoint
 import kotlinx.coroutines.Dispatchers
@@ -110,14 +111,55 @@ class ElevationRepository {
         existingSplits: List<SplitKm>,
     ): List<SplitKm> {
         if (points.size < 2 || existingSplits.isEmpty()) return existingSplits
+
+        val cumDist = DoubleArray(points.size)
+        for (i in 1 until points.size) {
+            cumDist[i] = cumDist[i - 1] + Formatters.haversineMeters(
+                points[i - 1].lat,
+                points[i - 1].lng,
+                points[i].lat,
+                points[i].lng
+            )
+        }
+        val totalDistM = cumDist.lastOrNull() ?: 0.0
+        val useDistanceSlicing = totalDistM >= 200.0
         val chunkSize = (points.size / existingSplits.size.toDouble()).coerceAtLeast(1.0)
+        val distStep = totalDistM / existingSplits.size.toDouble()
+
         return existingSplits.mapIndexed { idx, split ->
-            val start = (idx * chunkSize).toInt().coerceIn(0, points.lastIndex)
-            val end = ((idx + 1) * chunkSize).toInt().coerceIn(start, points.lastIndex)
-            val slice = points.subList(start, end + 1)
-            val netDiff = if (slice.size >= 2) computeElevationGain(slice) else split.eleDiff
+            val netDiff = if (useDistanceSlicing) {
+                val startDist = idx * distStep
+                val endDist = (idx + 1) * distStep
+                interpolateEleAtDist(points, cumDist, endDist) -
+                    interpolateEleAtDist(points, cumDist, startDist)
+            } else {
+                val start = (idx * chunkSize).toInt().coerceIn(0, points.lastIndex)
+                val end = ((idx + 1) * chunkSize).toInt().coerceIn(start, points.lastIndex)
+                val slice = points.subList(start, end + 1)
+                if (slice.size >= 2) slice.last().ele - slice.first().ele else split.eleDiff
+            }
             split.copy(eleDiff = (netDiff * 10.0).roundToInt() / 10.0)
         }
+    }
+
+    private fun interpolateEleAtDist(
+        points: List<TrackPoint>,
+        cumDist: DoubleArray,
+        targetDist: Double,
+    ): Double {
+        if (targetDist <= cumDist.first()) return points.first().ele
+        if (targetDist >= cumDist.last()) return points.last().ele
+        for (i in 0 until points.lastIndex) {
+            val d0 = cumDist[i]
+            val d1 = cumDist[i + 1]
+            if (targetDist in d0..d1) {
+                val span = d1 - d0
+                if (span <= 1e-6) return points[i].ele
+                val t = (targetDist - d0) / span
+                return points[i].ele + (points[i + 1].ele - points[i].ele) * t
+            }
+        }
+        return points.last().ele
     }
 
     fun computeElevationGain(points: List<TrackPoint>): Double {

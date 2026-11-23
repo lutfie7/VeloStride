@@ -133,14 +133,9 @@ object MapProjection {
         return worldYToLat(wy) to worldXToLng(wx)
     }
 
-    fun tileUrl(x: Int, y: Int, zoom: Int, darkTheme: Boolean): String {
-        val sub = listOf("a", "b", "c", "d")[((x + y) and 3)]
-        return if (darkTheme) {
-            "https://$sub.basemaps.cartocdn.com/dark_all/$zoom/$x/$y.png"
-        } else {
-            "https://$sub.basemaps.cartocdn.com/rastertiles/voyager/$zoom/$x/$y.png"
-        }
-    }
+    @Suppress("UNUSED_PARAMETER")
+    fun tileUrl(x: Int, y: Int, zoom: Int, darkTheme: Boolean = false): String =
+        "https://tile.openstreetmap.org/$zoom/$x/$y.png"
 
     fun visibleTiles(
         viewport: MapViewport,

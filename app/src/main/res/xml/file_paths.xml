@@ -2,4 +2,5 @@
 <paths>
     <cache-path name="shared_activity_cards" path="shared_cards/" />
     <cache-path name="shared_gpx" path="shared_gpx/" />
+    <cache-path name="shared_videos" path="shared_videos/" />
 </paths>
