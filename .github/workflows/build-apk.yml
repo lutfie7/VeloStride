@@ -33,10 +33,12 @@ jobs:
           fi
 
       - name: Prepare debug keystore, env file, and Firebase config
+        id: prep
         env:
           GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
           DEBUG_KEYSTORE_BASE64: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
         run: |
+          GENERATED=false
           if [ ! -f debug.keystore ]; then
             if [ -f debug.keystore.base64 ]; then
               base64 -d debug.keystore.base64 > debug.keystore
@@ -53,10 +55,21 @@ jobs:
                 -keysize 2048 \
                 -validity 10000 \
                 -dname "CN=Android Debug,O=Android,C=US"
+              GENERATED=true
             fi
           fi
+
+          echo "generated=$GENERATED" >> "$GITHUB_OUTPUT"
           echo "=== Debug Keystore Fingerprints ==="
           keytool -list -v -keystore debug.keystore -storepass android -alias androiddebugkey | grep -E "SHA1:|SHA256:" || true
+
+          if [ "$GENERATED" = "true" ]; then
+            SETUP_DIR="${{ runner.temp }}/keystore-setup"
+            mkdir -p "$SETUP_DIR"
+            base64 -w 0 debug.keystore > "$SETUP_DIR/debug.keystore.base64"
+            keytool -list -v -keystore debug.keystore -storepass android -alias androiddebugkey | grep -E "SHA1:|SHA256:" > "$SETUP_DIR/fingerprints.txt" || true
+          fi
+
           if [ -f .env.example ] && [ ! -f .env ]; then
             cp .env.example .env
           fi
@@ -70,6 +83,14 @@ jobs:
           if [ ! -f app/google-services.json ]; then
             echo "::warning::app/google-services.json not found. Add GOOGLE_SERVICES_JSON secret in GitHub repo settings to enable Google Sign-In and Firebase in the built APK."
           fi
+
+      - name: Upload one-time keystore setup files (if newly generated)
+        if: steps.prep.outputs.generated == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: velostride-keystore-setup
+          path: ${{ runner.temp }}/keystore-setup/
+          retention-days: 1
 
       - name: Build Debug APK
         run: gradle :app:assembleDebug --no-daemon --stacktrace

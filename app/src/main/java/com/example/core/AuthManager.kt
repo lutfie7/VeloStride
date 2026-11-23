@@ -134,18 +134,13 @@ fun onGoogleSignInClicked(
             val detail = e.errorMessage?.toString()?.takeIf { it.isNotBlank() }
                 ?: e.message.orEmpty()
             Log.w(AUTH_TAG, "Google Sign-In flow cancelled or dismissed: $detail", e)
-            val isManualCancel = detail.contains("user", ignoreCase = true) &&
-                !detail.contains("28444") &&
-                !detail.contains("developer", ignoreCase = true) &&
-                !detail.contains("blocked", ignoreCase = true)
-            if (isManualCancel) {
-                onAuthCancelled()
-            } else {
-                onAuthError(
-                    if (detail.isNotBlank()) "Google Sign-In ditutup: $detail"
-                    else "Google Sign-In gagal atau ditutup otomatis. Pastikan SHA-1 keystore cocok (DEBUG_KEYSTORE_BASE64) dan Play Services aktif."
-                )
-            }
+            onAuthError(
+                if (detail.isNotBlank()) {
+                    "Google Sign-In dibatalkan/ditolak ($detail). Jika Anda tidak menekan batal, SHA-1 keystore APK ini belum terdaftar di Firebase."
+                } else {
+                    "Google Sign-In gagal atau ditutup otomatis. Kemungkinan besar SHA-1 keystore APK ini belum cocok dengan Firebase."
+                }
+            )
         } catch (e: NoCredentialException) {
             val detail = e.errorMessage?.toString()?.takeIf { it.isNotBlank() }
                 ?: e.message.orEmpty()
