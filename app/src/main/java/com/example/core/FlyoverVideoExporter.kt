@@ -46,12 +46,28 @@ import java.net.URL
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
+import kotlin.math.PI
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.hypot
 import kotlin.math.roundToInt
+import kotlin.math.sin
 
 enum class FlyoverCameraMode(val label: String) {
     FOLLOW_3D("3D Follow"),
+    CINEMATIC_3D("Cinematic 3D"),
     FULL_ROUTE("Full Route"),
 }
+
+data class CinematicCameraPose(
+    val lookAtLat: Double,
+    val lookAtLng: Double,
+    val rotationZDeg: Float,
+    val pitchDeg: Float,
+    val zoomScale: Float,
+    val translationYFraction: Float,
+    val headingDeg: Float,
+)
 
 data class FlyoverSample(
     val lat: Double,
@@ -122,6 +138,63 @@ object FlyoverVideoExporter {
         )
     }
 
+    fun computeCinematicCameraPose(
+        points: List<TrackPoint>,
+        cumulativeDistances: DoubleArray,
+        progress: Float,
+        ratio: ShareCardRatio,
+    ): CinematicCameraPose {
+        val clamped = progress.coerceIn(0f, 1f)
+        val lookAtSample = interpolateSample(
+            points = points,
+            cumulativeDistances = cumulativeDistances,
+            progress = (clamped + 0.032f).coerceIn(0f, 1f)
+        )
+        val backSample = interpolateSample(
+            points = points,
+            cumulativeDistances = cumulativeDistances,
+            progress = (clamped - 0.045f).coerceIn(0f, 1f)
+        )
+        val aheadSample = interpolateSample(
+            points = points,
+            cumulativeDistances = cumulativeDistances,
+            progress = (clamped + 0.065f).coerceIn(0f, 1f)
+        )
+
+        val dWX = MapProjection.lngToWorldX(aheadSample.lng) - MapProjection.lngToWorldX(backSample.lng)
+        val dWY = MapProjection.latToWorldY(aheadSample.lat) - MapProjection.latToWorldY(backSample.lat)
+        val headingDeg = if (hypot(dWX, dWY) > 1e-9) {
+            Math.toDegrees(atan2(dWX, -dWY)).toFloat()
+        } else {
+            0f
+        }
+
+        // Gentle filmic drone banking & orbit pan layered atop travel heading
+        val orbitSweepDeg = (sin(clamped * 2.0 * PI) * 11.0).toFloat()
+        val rotationZDeg = -headingDeg + orbitSweepDeg
+
+        val pitchBase = if (ratio == ShareCardRatio.PORTRAIT_9_16) 40f else 46f
+        val pitchDeg = pitchBase + (sin(clamped * PI) * 6.0).toFloat()
+
+        val scaleBase = when (ratio) {
+            ShareCardRatio.LANDSCAPE_16_9 -> 1.48f
+            ShareCardRatio.SQUARE_1_1 -> 1.42f
+            ShareCardRatio.PORTRAIT_9_16 -> 1.38f
+        }
+        val zoomScale = scaleBase + (sin(clamped * PI) * 0.14).toFloat()
+        val translationYFraction = if (ratio == ShareCardRatio.PORTRAIT_9_16) 0.10f else 0.13f
+
+        return CinematicCameraPose(
+            lookAtLat = lookAtSample.lat,
+            lookAtLng = lookAtSample.lng,
+            rotationZDeg = rotationZDeg,
+            pitchDeg = pitchDeg,
+            zoomScale = zoomScale,
+            translationYFraction = translationYFraction,
+            headingDeg = headingDeg
+        )
+    }
+
     fun computeFlyoverVideoSize(ratio: ShareCardRatio): Pair<Int, Int> = when (ratio) {
         ShareCardRatio.SQUARE_1_1 -> 720 to 720
         ShareCardRatio.LANDSCAPE_16_9 -> 1280 to 720
@@ -170,6 +243,7 @@ object FlyoverVideoExporter {
                 cumulativeDistances = cumulativeDistances,
                 widthPx = vidW.toFloat(),
                 heightPx = vidH.toFloat(),
+                ratio = ratio,
                 cameraMode = cameraMode,
                 followZoom = followZoom,
                 darkTheme = darkTheme
@@ -240,15 +314,25 @@ object FlyoverVideoExporter {
                 // Hold briefly at the finish so viewers see the final route
                 val animFrac = (frameIdx.toFloat() / (totalFrames - 18).coerceAtLeast(1)).coerceIn(0f, 1f)
                 val sample = interpolateSample(points, cumulativeDistances, animFrac)
-                val activeViewport = if (cameraMode == FlyoverCameraMode.FOLLOW_3D) {
-                    MapProjection.computeViewportForCenter(
+                val cinematicPose = if (cameraMode == FlyoverCameraMode.CINEMATIC_3D) {
+                    computeCinematicCameraPose(points, cumulativeDistances, animFrac, ratio)
+                } else {
+                    null
+                }
+                val activeViewport = when (cameraMode) {
+                    FlyoverCameraMode.FOLLOW_3D -> MapProjection.computeViewportForCenter(
                         centerLat = sample.lat,
                         centerLng = sample.lng,
                         zoom = followZoom,
                         tileSizePx = 320.0
                     )
-                } else {
-                    overviewViewport
+                    FlyoverCameraMode.CINEMATIC_3D -> MapProjection.computeViewportForCenter(
+                        centerLat = cinematicPose!!.lookAtLat,
+                        centerLng = cinematicPose.lookAtLng,
+                        zoom = followZoom,
+                        tileSizePx = 380.0
+                    )
+                    FlyoverCameraMode.FULL_ROUTE -> overviewViewport
                 }
 
                 drawFlyoverFrame(
@@ -265,6 +349,7 @@ object FlyoverVideoExporter {
                     sample = sample,
                     progress = animFrac,
                     cameraMode = cameraMode,
+                    cinematicPose = cinematicPose,
                     viewport = activeViewport,
                     tileCache = tileCache,
                     tilePaint = tilePaint,
@@ -379,30 +464,53 @@ object FlyoverVideoExporter {
         cumulativeDistances: DoubleArray,
         widthPx: Float,
         heightPx: Float,
+        ratio: ShareCardRatio,
         cameraMode: FlyoverCameraMode,
         followZoom: Int,
         darkTheme: Boolean,
     ): Map<String, Bitmap> {
         val neededUrls = LinkedHashMap<String, String>()
-        if (cameraMode == FlyoverCameraMode.FULL_ROUTE) {
-            val vp = MapProjection.computeViewportForPoints(points, widthPx, heightPx, 64f)
-            MapProjection.visibleTiles(vp, widthPx, heightPx, darkTheme).forEach { tile ->
-                neededUrls["${tile.zoom}/${tile.x}/${tile.y}"] = tile.url
-            }
-        } else {
-            val steps = 16
-            for (s in 0..steps) {
-                val sample = interpolateSample(points, cumulativeDistances, s / steps.toFloat())
-                val vp = MapProjection.computeViewportForCenter(
-                    centerLat = sample.lat,
-                    centerLng = sample.lng,
-                    zoom = followZoom,
-                    tileSizePx = 320.0
-                )
+        when (cameraMode) {
+            FlyoverCameraMode.FULL_ROUTE -> {
+                val vp = MapProjection.computeViewportForPoints(points, widthPx, heightPx, 64f)
                 MapProjection.visibleTiles(vp, widthPx, heightPx, darkTheme).forEach { tile ->
-                    val key = "${tile.zoom}/${tile.x}/${tile.y}"
-                    if (neededUrls.size < 48) {
-                        neededUrls.putIfAbsent(key, tile.url)
+                    neededUrls["${tile.zoom}/${tile.x}/${tile.y}"] = tile.url
+                }
+            }
+            FlyoverCameraMode.FOLLOW_3D -> {
+                val steps = 16
+                for (s in 0..steps) {
+                    val sample = interpolateSample(points, cumulativeDistances, s / steps.toFloat())
+                    val vp = MapProjection.computeViewportForCenter(
+                        centerLat = sample.lat,
+                        centerLng = sample.lng,
+                        zoom = followZoom,
+                        tileSizePx = 320.0
+                    )
+                    MapProjection.visibleTiles(vp, widthPx, heightPx, darkTheme).forEach { tile ->
+                        val key = "${tile.zoom}/${tile.x}/${tile.y}"
+                        if (neededUrls.size < 48) {
+                            neededUrls.putIfAbsent(key, tile.url)
+                        }
+                    }
+                }
+            }
+            FlyoverCameraMode.CINEMATIC_3D -> {
+                val overscan = hypot(widthPx, heightPx) * 1.25f
+                val steps = 16
+                for (s in 0..steps) {
+                    val pose = computeCinematicCameraPose(points, cumulativeDistances, s / steps.toFloat(), ratio)
+                    val vp = MapProjection.computeViewportForCenter(
+                        centerLat = pose.lookAtLat,
+                        centerLng = pose.lookAtLng,
+                        zoom = followZoom,
+                        tileSizePx = 380.0
+                    )
+                    MapProjection.visibleTiles(vp, overscan, overscan, darkTheme).forEach { tile ->
+                        val key = "${tile.zoom}/${tile.x}/${tile.y}"
+                        if (neededUrls.size < 72) {
+                            neededUrls.putIfAbsent(key, tile.url)
+                        }
                     }
                 }
             }
@@ -439,6 +547,7 @@ object FlyoverVideoExporter {
         sample: FlyoverSample,
         progress: Float,
         cameraMode: FlyoverCameraMode,
+        cinematicPose: CinematicCameraPose?,
         viewport: MapViewport,
         tileCache: Map<String, Bitmap>,
         tilePaint: Paint,
@@ -446,23 +555,61 @@ object FlyoverVideoExporter {
     ) {
         val w = width.toFloat()
         val h = height.toFloat()
-        canvas.drawColor(if (darkTheme) 0xFF0E131B.toInt() else 0xFFECEAE4.toInt())
+        val isCinematic = cameraMode == FlyoverCameraMode.CINEMATIC_3D && cinematicPose != null
 
-        canvas.save()
-        if (cameraMode == FlyoverCameraMode.FOLLOW_3D) {
-            val camera = Camera()
-            val matrix = Matrix()
-            camera.save()
-            camera.rotateX(24f)
-            camera.getMatrix(matrix)
-            camera.restore()
-            matrix.preTranslate(-w / 2f, -h / 2f)
-            matrix.postScale(1.22f, 1.22f)
-            matrix.postTranslate(w / 2f, h / 2f)
-            canvas.concat(matrix)
+        if (isCinematic) {
+            val skyPaint = Paint().apply {
+                shader = LinearGradient(
+                    0f, 0f, 0f, h * 0.45f,
+                    if (darkTheme) 0xFF060A13.toInt() else 0xFF1E293B.toInt(),
+                    if (darkTheme) 0xFF101928.toInt() else 0xFF334155.toInt(),
+                    Shader.TileMode.CLAMP
+                )
+            }
+            canvas.drawRect(0f, 0f, w, h, skyPaint)
+        } else {
+            canvas.drawColor(if (darkTheme) 0xFF0E131B.toInt() else 0xFFECEAE4.toInt())
         }
 
-        val tiles = MapProjection.visibleTiles(viewport, w, h, darkTheme)
+        val projW = if (isCinematic) hypot(w, h) * 1.25f else w
+        val projH = if (isCinematic) projW else h
+
+        canvas.save()
+        when (cameraMode) {
+            FlyoverCameraMode.FOLLOW_3D -> {
+                val camera = Camera()
+                val matrix = Matrix()
+                camera.save()
+                camera.rotateX(24f)
+                camera.getMatrix(matrix)
+                camera.restore()
+                matrix.preTranslate(-w / 2f, -h / 2f)
+                matrix.postScale(1.22f, 1.22f)
+                matrix.postTranslate(w / 2f, h / 2f)
+                canvas.concat(matrix)
+            }
+            FlyoverCameraMode.CINEMATIC_3D -> {
+                val pose = cinematicPose!!
+                val preMatrix = Matrix().apply {
+                    postTranslate(-projW / 2f, -projH / 2f)
+                    postRotate(pose.rotationZDeg)
+                }
+                val camera = Camera()
+                val camMatrix = Matrix()
+                camera.save()
+                camera.setLocation(0f, 0f, -14f)
+                camera.rotateX(pose.pitchDeg)
+                camera.getMatrix(camMatrix)
+                camera.restore()
+                camMatrix.preConcat(preMatrix)
+                camMatrix.postScale(pose.zoomScale, pose.zoomScale)
+                camMatrix.postTranslate(w / 2f, h / 2f + h * pose.translationYFraction)
+                canvas.concat(camMatrix)
+            }
+            FlyoverCameraMode.FULL_ROUTE -> Unit
+        }
+
+        val tiles = MapProjection.visibleTiles(viewport, projW, projH, darkTheme)
         for (tile in tiles) {
             val bmp = tileCache["${tile.zoom}/${tile.x}/${tile.y}"]
             if (bmp != null && !bmp.isRecycled) {
@@ -475,17 +622,68 @@ object FlyoverVideoExporter {
                 canvas.drawBitmap(bmp, null, dst, tilePaint)
             }
         }
-        canvas.drawColor(if (darkTheme) 0x22000000 else 0x12FFFFFF)
+        val scrimPaint = Paint().apply {
+            color = if (darkTheme) 0x22000000 else 0x12FFFFFF
+        }
+        canvas.drawRect(0f, 0f, projW, projH, scrimPaint)
 
         // Projected route
-        val projectedX = FloatArray(points.size)
-        val projectedY = FloatArray(points.size)
-        val fullPath = Path()
+        val eleSpan = (maxEle - minEle).coerceAtLeast(1.0)
+        val hasElevationRelief = isCinematic && (maxEle - minEle) >= 3.0
+        val maxLiftPx = if (hasElevationRelief) 42f else 0f
+        val rotRad = if (isCinematic) Math.toRadians(cinematicPose!!.rotationZDeg.toDouble()) else 0.0
+        val upVecX = (-sin(rotRad)).toFloat()
+        val upVecY = (-cos(rotRad)).toFloat()
+
+        val groundX = FloatArray(points.size)
+        val groundY = FloatArray(points.size)
+        val liftedX = FloatArray(points.size)
+        val liftedY = FloatArray(points.size)
+        val fullGroundPath = Path()
+        val fullLiftedPath = Path()
+
         for (i in points.indices) {
-            val (px, py) = MapProjection.project(points[i].lat, points[i].lng, viewport, w, h)
-            projectedX[i] = px
-            projectedY[i] = py
-            if (i == 0) fullPath.moveTo(px, py) else fullPath.lineTo(px, py)
+            val (px, py) = MapProjection.project(points[i].lat, points[i].lng, viewport, projW, projH)
+            groundX[i] = px
+            groundY[i] = py
+            val lift = if (hasElevationRelief) {
+                (((points[i].ele - minEle) / eleSpan).toFloat().coerceIn(0f, 1f)) * maxLiftPx
+            } else 0f
+            val lx = px + upVecX * lift
+            val ly = py + upVecY * lift
+            liftedX[i] = lx
+            liftedY[i] = ly
+            if (i == 0) {
+                fullGroundPath.moveTo(px, py)
+                fullLiftedPath.moveTo(lx, ly)
+            } else {
+                fullGroundPath.lineTo(px, py)
+                fullLiftedPath.lineTo(lx, ly)
+            }
+        }
+
+        if (isCinematic) {
+            val shadowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = 0x66000000
+                style = Paint.Style.STROKE
+                strokeWidth = 12f
+                strokeCap = Paint.Cap.ROUND
+                strokeJoin = Paint.Join.ROUND
+            }
+            canvas.drawPath(fullGroundPath, shadowPaint)
+
+            if (hasElevationRelief) {
+                val ribPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = 0x3D00D4FF
+                    style = Paint.Style.STROKE
+                    strokeWidth = 2.5f
+                    strokeCap = Paint.Cap.ROUND
+                }
+                val step = (points.size / 42).coerceAtLeast(1)
+                for (i in points.indices step step) {
+                    canvas.drawLine(groundX[i], groundY[i], liftedX[i], liftedY[i], ribPaint)
+                }
+            }
         }
 
         val upcomingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -495,14 +693,20 @@ object FlyoverVideoExporter {
             strokeCap = Paint.Cap.ROUND
             strokeJoin = Paint.Join.ROUND
         }
-        canvas.drawPath(fullPath, upcomingPaint)
+        canvas.drawPath(fullLiftedPath, upcomingPaint)
 
-        val (headX, headY) = MapProjection.project(sample.lat, sample.lng, viewport, w, h)
+        val (headGX, headGY) = MapProjection.project(sample.lat, sample.lng, viewport, projW, projH)
+        val headLift = if (hasElevationRelief) {
+            (((sample.ele - minEle) / eleSpan).toFloat().coerceIn(0f, 1f)) * maxLiftPx
+        } else 0f
+        val headX = headGX + upVecX * headLift
+        val headY = headGY + upVecY * headLift
+
         val activePath = Path().apply {
-            moveTo(projectedX[0], projectedY[0])
+            moveTo(liftedX[0], liftedY[0])
             val maxSeg = sample.segmentIndex.coerceIn(0, points.lastIndex)
             for (i in 1..maxSeg) {
-                lineTo(projectedX[i], projectedY[i])
+                lineTo(liftedX[i], liftedY[i])
             }
             lineTo(headX, headY)
         }
@@ -524,7 +728,7 @@ object FlyoverVideoExporter {
         val trailPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = 0xFFFC4C02.toInt()
             style = Paint.Style.STROKE
-            strokeWidth = 10f
+            strokeWidth = if (isCinematic) 11f else 10f
             strokeCap = Paint.Cap.ROUND
             strokeJoin = Paint.Join.ROUND
         }
@@ -532,16 +736,56 @@ object FlyoverVideoExporter {
         canvas.drawPath(activePath, glowPaint)
         canvas.drawPath(activePath, trailPaint)
 
+        if (isCinematic) {
+            val corePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = 0xAAFFF3E0.toInt()
+                style = Paint.Style.STROKE
+                strokeWidth = 3.5f
+                strokeCap = Paint.Cap.ROUND
+                strokeJoin = Paint.Join.ROUND
+            }
+            canvas.drawPath(activePath, corePaint)
+
+            // Forward heading beam
+            val aheadSample = interpolateSample(points, cumulativeDistances, (progress + 0.025f).coerceIn(0f, 1f))
+            val (aheadGX, aheadGY) = MapProjection.project(aheadSample.lat, aheadSample.lng, viewport, projW, projH)
+            val aheadLift = if (hasElevationRelief) {
+                (((aheadSample.ele - minEle) / eleSpan).toFloat().coerceIn(0f, 1f)) * maxLiftPx
+            } else 0f
+            val dx = (aheadGX + upVecX * aheadLift) - headX
+            val dy = (aheadGY + upVecY * aheadLift) - headY
+            val len = hypot(dx, dy)
+            if (len > 2f) {
+                val beamPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = 0x8800D4FF.toInt()
+                    style = Paint.Style.STROKE
+                    strokeWidth = 5f
+                    strokeCap = Paint.Cap.ROUND
+                }
+                canvas.drawLine(headX, headY, headX + (dx / len) * 54f, headY + (dy / len) * 54f, beamPaint)
+            }
+        }
+
         // Start, Finish & Moving Head
         val startPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF10B981.toInt() }
         val whitePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
-        canvas.drawCircle(projectedX[0], projectedY[0], 11f, startPaint)
-        canvas.drawCircle(projectedX[0], projectedY[0], 4.5f, whitePaint)
+        canvas.drawCircle(liftedX[0], liftedY[0], 11f, startPaint)
+        canvas.drawCircle(liftedX[0], liftedY[0], 4.5f, whitePaint)
 
         if (progress >= 0.99f) {
             val endPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFEF4444.toInt() }
-            canvas.drawCircle(projectedX.last(), projectedY.last(), 12f, endPaint)
-            canvas.drawCircle(projectedX.last(), projectedY.last(), 5f, whitePaint)
+            canvas.drawCircle(liftedX.last(), liftedY.last(), 12f, endPaint)
+            canvas.drawCircle(liftedX.last(), liftedY.last(), 5f, whitePaint)
+        }
+
+        if (isCinematic && headLift > 2f) {
+            val stemPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = 0x9900D4FF.toInt()
+                strokeWidth = 3f
+            }
+            canvas.drawLine(headGX, headGY, headX, headY, stemPaint)
+            val groundDotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x66000000 }
+            canvas.drawCircle(headGX, headGY, 12f, groundDotPaint)
         }
 
         val pulsePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x4800D4FF }
@@ -551,6 +795,18 @@ object FlyoverVideoExporter {
         canvas.drawCircle(headX, headY, 6f, whitePaint)
 
         canvas.restore()
+
+        if (isCinematic) {
+            val horizonMistPaint = Paint().apply {
+                shader = LinearGradient(
+                    0f, 0f, 0f, h * 0.28f,
+                    0xEB070C16.toInt(),
+                    0x00070C16,
+                    Shader.TileMode.CLAMP
+                )
+            }
+            canvas.drawRect(0f, 0f, w, h * 0.28f, horizonMistPaint)
+        }
 
         // Flat HUD Overlay
         val pad = 28f

@@ -6,6 +6,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -20,6 +21,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -36,6 +38,7 @@ import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Replay
 import androidx.compose.material.icons.rounded.Share
+import androidx.compose.material.icons.rounded.Videocam
 import androidx.compose.material.icons.rounded.ZoomOutMap
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
@@ -91,7 +94,10 @@ import com.example.ui.theme.SignalCyan
 import com.example.ui.theme.VeloOrange
 import kotlinx.coroutines.launch
 import java.io.File
+import kotlin.math.cos
+import kotlin.math.hypot
 import kotlin.math.roundToInt
+import kotlin.math.sin
 
 @SuppressLint("UnusedBoxWithConstraintsScope")
 @Composable
@@ -230,59 +236,41 @@ fun FlyoverMapAnimator(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        // Camera Mode & Speed Bar
+        // Camera Mode Bar (3D Follow, Cinematic 3D, Full Route)
         Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                FlyoverCameraMode.entries.forEach { mode ->
-                    FilterChip(
-                        selected = cameraMode == mode,
-                        onClick = { cameraMode = mode },
-                        leadingIcon = {
-                            Icon(
-                                imageVector = if (mode == FlyoverCameraMode.FOLLOW_3D) {
-                                    Icons.Rounded.Explore
-                                } else {
-                                    Icons.Rounded.ZoomOutMap
-                                },
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp)
-                            )
-                        },
-                        label = { Text(mode.label, maxLines = 1) },
-                        modifier = Modifier.testTag("flyover_mode_${mode.name.lowercase()}")
-                    )
+            FlyoverCameraMode.entries.forEach { mode ->
+                val modeIcon = when (mode) {
+                    FlyoverCameraMode.FOLLOW_3D -> Icons.Rounded.Explore
+                    FlyoverCameraMode.CINEMATIC_3D -> Icons.Rounded.Videocam
+                    FlyoverCameraMode.FULL_ROUTE -> Icons.Rounded.ZoomOutMap
                 }
-            }
-
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                listOf(1f, 2f, 4f, 8f).forEach { spd ->
-                    val active = speedMultiplier == spd
-                    Surface(
-                        color = if (active) VeloOrange else MaterialTheme.colorScheme.surfaceVariant,
-                        shape = RoundedCornerShape(8.dp),
-                        onClick = { speedMultiplier = spd },
-                        modifier = Modifier.testTag("flyover_speed_${spd.toInt()}x")
-                    ) {
-                        Text(
-                            text = "${spd.toInt()}x",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontFamily = JetBrainsMonoFontFamily,
-                            fontWeight = FontWeight.Bold,
-                            color = if (active) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
+                FilterChip(
+                    selected = cameraMode == mode,
+                    onClick = { cameraMode = mode },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = modeIcon,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
                         )
-                    }
-                }
+                    },
+                    label = { Text(mode.label, maxLines = 1) },
+                    modifier = Modifier.testTag("flyover_mode_${mode.name.lowercase()}")
+                )
             }
         }
 
-        // Aspect Ratio Bar (1:1, 16:9, 9:16)
+        // Aspect Ratio (1:1, 16:9, 9:16) & Speed Selector Bar
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
@@ -292,12 +280,6 @@ fun FlyoverMapAnimator(
                 tint = SignalCyan,
                 modifier = Modifier.size(16.dp)
             )
-            Text(
-                text = "Rasio",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.width(2.dp))
             ShareCardRatio.entries.forEach { ratio ->
                 FilterChip(
                     selected = activeRatio == ratio,
@@ -305,6 +287,25 @@ fun FlyoverMapAnimator(
                     label = { Text(ratio.label, maxLines = 1) },
                     modifier = Modifier.testTag("flyover_ratio_${ratio.fileTag}")
                 )
+            }
+            Spacer(Modifier.width(4.dp))
+            listOf(1f, 2f, 4f, 8f).forEach { spd ->
+                val active = speedMultiplier == spd
+                Surface(
+                    color = if (active) VeloOrange else MaterialTheme.colorScheme.surfaceVariant,
+                    shape = RoundedCornerShape(8.dp),
+                    onClick = { speedMultiplier = spd },
+                    modifier = Modifier.testTag("flyover_speed_${spd.toInt()}x")
+                ) {
+                    Text(
+                        text = "${spd.toInt()}x",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontFamily = JetBrainsMonoFontFamily,
+                        fontWeight = FontWeight.Bold,
+                        color = if (active) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
+                    )
+                }
             }
         }
 
@@ -340,6 +341,23 @@ fun FlyoverMapAnimator(
                 val widthPx = with(density) { maxWidth.toPx() }.coerceAtLeast(16f)
                 val heightPx = with(density) { maxHeight.toPx() }.coerceAtLeast(16f)
                 val padPx = with(density) { 24.dp.toPx() }
+                val isCinematic = cameraMode == FlyoverCameraMode.CINEMATIC_3D
+
+                val cinematicPose = if (isCinematic) {
+                    FlyoverVideoExporter.computeCinematicCameraPose(
+                        points = points,
+                        cumulativeDistances = cumulativeDistances,
+                        progress = progress,
+                        ratio = activeRatio
+                    )
+                } else {
+                    null
+                }
+
+                val projW = if (isCinematic) hypot(widthPx, heightPx) * 1.25f else widthPx
+                val projH = if (isCinematic) projW else heightPx
+                val projWDp = with(density) { projW.toDp() }
+                val projHDp = with(density) { projH.toDp() }
 
                 val overviewViewport = remember(points, widthPx, heightPx, padPx) {
                     MapProjection.computeViewportForPoints(
@@ -349,97 +367,256 @@ fun FlyoverMapAnimator(
                         paddingPx = padPx
                     )
                 }
-                val activeViewport = if (cameraMode == FlyoverCameraMode.FOLLOW_3D) {
-                    MapProjection.computeViewportForCenter(
+                val activeViewport = when (cameraMode) {
+                    FlyoverCameraMode.FOLLOW_3D -> MapProjection.computeViewportForCenter(
                         centerLat = currentSample.lat,
                         centerLng = currentSample.lng,
                         zoom = followZoom,
                         tileSizePx = 320.0
                     )
-                } else {
-                    overviewViewport
+                    FlyoverCameraMode.CINEMATIC_3D -> MapProjection.computeViewportForCenter(
+                        centerLat = cinematicPose!!.lookAtLat,
+                        centerLng = cinematicPose.lookAtLng,
+                        zoom = followZoom,
+                        tileSizePx = 380.0
+                    )
+                    FlyoverCameraMode.FULL_ROUTE -> overviewViewport
+                }
+
+                if (isCinematic) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(
+                                Brush.verticalGradient(
+                                    listOf(
+                                        if (darkTheme) Color(0xFF060A13) else Color(0xFF1E293B),
+                                        if (darkTheme) Color(0xFF101928) else Color(0xFF334155)
+                                    )
+                                )
+                            )
+                    )
                 }
 
                 Box(
+                    contentAlignment = Alignment.Center,
                     modifier = Modifier
                         .fillMaxSize()
                         .graphicsLayer {
-                            if (cameraMode == FlyoverCameraMode.FOLLOW_3D) {
-                                rotationX = 24f
-                                cameraDistance = 14f * density.density
-                                scaleX = 1.22f
-                                scaleY = 1.22f
+                            when (cameraMode) {
+                                FlyoverCameraMode.FOLLOW_3D -> {
+                                    rotationX = 24f
+                                    cameraDistance = 14f * density.density
+                                    scaleX = 1.22f
+                                    scaleY = 1.22f
+                                }
+                                FlyoverCameraMode.CINEMATIC_3D -> {
+                                    val pose = cinematicPose!!
+                                    rotationX = pose.pitchDeg
+                                    cameraDistance = 11f * density.density
+                                    scaleX = pose.zoomScale
+                                    scaleY = pose.zoomScale
+                                    translationY = heightPx * pose.translationYFraction
+                                }
+                                FlyoverCameraMode.FULL_ROUTE -> Unit
                             }
                         }
                 ) {
-                    MapTileBackground(
-                        viewport = activeViewport,
-                        widthPx = widthPx,
-                        heightPx = heightPx,
-                        darkTheme = darkTheme
+                    Box(
+                        modifier = Modifier
+                            .requiredSize(projWDp, projHDp)
+                            .graphicsLayer {
+                                if (isCinematic) {
+                                    rotationZ = cinematicPose!!.rotationZDeg
+                                }
+                            }
+                    ) {
+                        MapTileBackground(
+                            viewport = activeViewport,
+                            widthPx = projW,
+                            heightPx = projH,
+                            darkTheme = darkTheme
+                        )
+
+                        Canvas(modifier = Modifier.fillMaxSize()) {
+                            val minEle = points.minOf { it.ele }
+                            val maxEle = points.maxOf { it.ele }
+                            val eleSpan = (maxEle - minEle).coerceAtLeast(1.0)
+                            val hasRelief = isCinematic && (maxEle - minEle) >= 3.0
+                            val maxLiftPx = if (hasRelief) 28f else 0f
+                            val rotRad = if (isCinematic) {
+                                Math.toRadians(cinematicPose!!.rotationZDeg.toDouble())
+                            } else 0.0
+                            val upX = (-sin(rotRad)).toFloat()
+                            val upY = (-cos(rotRad)).toFloat()
+
+                            val groundPts = ArrayList<Offset>(points.size)
+                            val liftedPts = ArrayList<Offset>(points.size)
+                            for (pt in points) {
+                                val (px, py) = MapProjection.project(pt.lat, pt.lng, activeViewport, size.width, size.height)
+                                groundPts.add(Offset(px, py))
+                                val lift = if (hasRelief) {
+                                    (((pt.ele - minEle) / eleSpan).toFloat().coerceIn(0f, 1f)) * maxLiftPx
+                                } else 0f
+                                liftedPts.add(Offset(px + upX * lift, py + upY * lift))
+                            }
+
+                            if (isCinematic) {
+                                val shadowPath = Path().apply {
+                                    moveTo(groundPts.first().x, groundPts.first().y)
+                                    for (i in 1 until groundPts.size) {
+                                        lineTo(groundPts[i].x, groundPts[i].y)
+                                    }
+                                }
+                                drawPath(
+                                    shadowPath,
+                                    Color.Black.copy(alpha = 0.42f),
+                                    style = Stroke(width = 8f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                                )
+                                if (hasRelief) {
+                                    val step = (points.size / 36).coerceAtLeast(1)
+                                    for (i in points.indices step step) {
+                                        drawLine(
+                                            color = SignalCyan.copy(alpha = 0.28f),
+                                            start = groundPts[i],
+                                            end = liftedPts[i],
+                                            strokeWidth = 2f
+                                        )
+                                    }
+                                }
+                            }
+
+                            val fullPath = Path().apply {
+                                moveTo(liftedPts.first().x, liftedPts.first().y)
+                                for (i in 1 until liftedPts.size) {
+                                    lineTo(liftedPts[i].x, liftedPts[i].y)
+                                }
+                            }
+                            drawPath(
+                                fullPath,
+                                VeloOrange.copy(alpha = 0.24f),
+                                style = Stroke(width = 6f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                            )
+
+                            val (headGX, headGY) = MapProjection.project(
+                                currentSample.lat,
+                                currentSample.lng,
+                                activeViewport,
+                                size.width,
+                                size.height
+                            )
+                            val headLift = if (hasRelief) {
+                                (((currentSample.ele - minEle) / eleSpan).toFloat().coerceIn(0f, 1f)) * maxLiftPx
+                            } else 0f
+                            val headGround = Offset(headGX, headGY)
+                            val headOffset = Offset(headGX + upX * headLift, headGY + upY * headLift)
+
+                            val activePath = Path().apply {
+                                moveTo(liftedPts.first().x, liftedPts.first().y)
+                                val maxSeg = currentSample.segmentIndex.coerceIn(0, liftedPts.lastIndex)
+                                for (i in 1..maxSeg) {
+                                    lineTo(liftedPts[i].x, liftedPts[i].y)
+                                }
+                                lineTo(headOffset.x, headOffset.y)
+                            }
+
+                            drawPath(
+                                activePath,
+                                Color.Black.copy(alpha = if (darkTheme) 0.50f else 0.25f),
+                                style = Stroke(width = 14f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                            )
+                            drawPath(
+                                activePath,
+                                VeloOrange.copy(alpha = 0.34f),
+                                style = Stroke(width = 18f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                            )
+                            drawPath(
+                                activePath,
+                                VeloOrange,
+                                style = Stroke(width = if (isCinematic) 8f else 7f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                            )
+
+                            if (isCinematic) {
+                                drawPath(
+                                    activePath,
+                                    Color(0xAAFFF3E0),
+                                    style = Stroke(width = 2.5f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                                )
+                                val aheadSample = FlyoverVideoExporter.interpolateSample(
+                                    points,
+                                    cumulativeDistances,
+                                    (progress + 0.025f).coerceIn(0f, 1f)
+                                )
+                                val (aGX, aGY) = MapProjection.project(
+                                    aheadSample.lat,
+                                    aheadSample.lng,
+                                    activeViewport,
+                                    size.width,
+                                    size.height
+                                )
+                                val aLift = if (hasRelief) {
+                                    (((aheadSample.ele - minEle) / eleSpan).toFloat().coerceIn(0f, 1f)) * maxLiftPx
+                                } else 0f
+                                val dx = (aGX + upX * aLift) - headOffset.x
+                                val dy = (aGY + upY * aLift) - headOffset.y
+                                val len = hypot(dx, dy)
+                                if (len > 2f) {
+                                    drawLine(
+                                        color = SignalCyan.copy(alpha = 0.65f),
+                                        start = headOffset,
+                                        end = Offset(headOffset.x + (dx / len) * 34f, headOffset.y + (dy / len) * 34f),
+                                        strokeWidth = 3.5f,
+                                        cap = StrokeCap.Round
+                                    )
+                                }
+                            }
+
+                            drawCircle(EmeraldPeak, radius = 8.5f, center = liftedPts.first())
+                            drawCircle(Color.White, radius = 3.5f, center = liftedPts.first())
+                            if (progress >= 0.99f) {
+                                drawCircle(CrimsonPulse, radius = 9.5f, center = liftedPts.last())
+                                drawCircle(Color.White, radius = 4f, center = liftedPts.last())
+                            }
+
+                            if (isCinematic && headLift > 2f) {
+                                drawCircle(Color.Black.copy(alpha = 0.45f), radius = 8f, center = headGround)
+                                drawLine(SignalCyan.copy(alpha = 0.65f), headGround, headOffset, strokeWidth = 2.5f)
+                            }
+
+                            drawCircle(SignalCyan.copy(alpha = 0.28f), radius = 22f, center = headOffset)
+                            drawCircle(VeloOrange, radius = 12f, center = headOffset)
+                            drawCircle(Color.White, radius = 5f, center = headOffset)
+                        }
+                    }
+                }
+
+                if (isCinematic) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .fillMaxHeight(0.28f)
+                            .align(Alignment.TopCenter)
+                            .background(
+                                Brush.verticalGradient(
+                                    listOf(Color(0xEB070C16), Color.Transparent)
+                                )
+                            )
                     )
-
-                    Canvas(modifier = Modifier.fillMaxSize()) {
-                        val projected = points.map { pt ->
-                            val (px, py) = MapProjection.project(pt.lat, pt.lng, activeViewport, size.width, size.height)
-                            Offset(px, py)
-                        }
-
-                        val fullPath = Path().apply {
-                            moveTo(projected.first().x, projected.first().y)
-                            for (i in 1 until projected.size) {
-                                lineTo(projected[i].x, projected[i].y)
-                            }
-                        }
-                        drawPath(
-                            fullPath,
-                            VeloOrange.copy(alpha = 0.24f),
-                            style = Stroke(width = 6f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                    Surface(
+                        color = Color(0xB30D121A),
+                        shape = RoundedCornerShape(6.dp),
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .padding(6.dp)
+                    ) {
+                        Text(
+                            text = "CINEMATIC 3D",
+                            fontSize = 8.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 0.8.sp,
+                            color = SignalCyan,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                         )
-
-                        val (headX, headY) = MapProjection.project(
-                            currentSample.lat,
-                            currentSample.lng,
-                            activeViewport,
-                            size.width,
-                            size.height
-                        )
-                        val headOffset = Offset(headX, headY)
-                        val activePath = Path().apply {
-                            moveTo(projected.first().x, projected.first().y)
-                            val maxSeg = currentSample.segmentIndex.coerceIn(0, projected.lastIndex)
-                            for (i in 1..maxSeg) {
-                                lineTo(projected[i].x, projected[i].y)
-                            }
-                            lineTo(headOffset.x, headOffset.y)
-                        }
-
-                        drawPath(
-                            activePath,
-                            Color.Black.copy(alpha = if (darkTheme) 0.50f else 0.25f),
-                            style = Stroke(width = 14f, cap = StrokeCap.Round, join = StrokeJoin.Round)
-                        )
-                        drawPath(
-                            activePath,
-                            VeloOrange.copy(alpha = 0.34f),
-                            style = Stroke(width = 18f, cap = StrokeCap.Round, join = StrokeJoin.Round)
-                        )
-                        drawPath(
-                            activePath,
-                            VeloOrange,
-                            style = Stroke(width = 7f, cap = StrokeCap.Round, join = StrokeJoin.Round)
-                        )
-
-                        drawCircle(EmeraldPeak, radius = 8.5f, center = projected.first())
-                        drawCircle(Color.White, radius = 3.5f, center = projected.first())
-                        if (progress >= 0.99f) {
-                            drawCircle(CrimsonPulse, radius = 9.5f, center = projected.last())
-                            drawCircle(Color.White, radius = 4f, center = projected.last())
-                        }
-
-                        drawCircle(SignalCyan.copy(alpha = 0.28f), radius = 22f, center = headOffset)
-                        drawCircle(VeloOrange, radius = 12f, center = headOffset)
-                        drawCircle(Color.White, radius = 5f, center = headOffset)
                     }
                 }
 

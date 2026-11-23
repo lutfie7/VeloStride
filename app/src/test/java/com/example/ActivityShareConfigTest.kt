@@ -99,4 +99,30 @@ class ActivityShareConfigTest {
         assertEquals(30.0, end.ele, 0.5)
         assertTrue(mid.distanceMeters > start.distanceMeters && mid.distanceMeters < end.distanceMeters)
     }
+
+    @Test
+    fun `cinematic 3D camera pose aligns with travel bearing and keeps finite pitch and zoom across ratios`() {
+        // Straight eastward track along -6.200 deg latitude
+        val eastPts = listOf(
+            TrackPoint(lat = -6.200, lng = 106.800, ele = 100.0),
+            TrackPoint(lat = -6.200, lng = 106.810, ele = 140.0),
+            TrackPoint(lat = -6.200, lng = 106.820, ele = 180.0),
+        )
+        val dists = FlyoverVideoExporter.computeCumulativeDistances(eastPts)
+
+        ShareCardRatio.entries.forEach { ratio ->
+            val midPose = FlyoverVideoExporter.computeCinematicCameraPose(
+                points = eastPts,
+                cumulativeDistances = dists,
+                progress = 0.5f,
+                ratio = ratio
+            )
+            // Moving East -> heading ~ +90 deg, and at progress=0.5 sin(pi)=0 so rotationZ ~ -90 deg
+            assertEquals(90f, midPose.headingDeg, 2.5f)
+            assertEquals(-90f, midPose.rotationZDeg, 2.5f)
+            assertTrue(midPose.pitchDeg in 38f..55f)
+            assertTrue(midPose.zoomScale in 1.3f..1.7f)
+            assertTrue(midPose.lookAtLng > 106.810)
+        }
+    }
 }

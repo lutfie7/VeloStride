@@ -163,7 +163,7 @@ object MapProjection {
 
         val countX = (maxTX - minTX + 1).coerceAtLeast(0)
         val countY = (maxTY - minTY + 1).coerceAtLeast(0)
-        if (countX * countY > 36) return emptyList()
+        if (countX * countY > 64) return emptyList()
 
         val tiles = ArrayList<MapTileSpec>(countX * countY)
         for (ty in minTY..maxTY) {
