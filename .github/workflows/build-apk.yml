@@ -87,12 +87,11 @@ jobs:
           CLEAN_APPCHECK_TOKEN=$(printf '%s' "$FIREBASE_APPCHECK_DEBUG_TOKEN" | tr -d '[:space:]')
           if [ -n "$CLEAN_APPCHECK_TOKEN" ]; then
             mkdir -p app/src/debug/res/values
-            cat > app/src/debug/res/values/appcheck_debug.xml <<EOF
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <string name="firebase_appcheck_debug_token" translatable="false">${CLEAN_APPCHECK_TOKEN}</string>
-</resources>
-EOF
+            printf '%s\n' \
+              '<?xml version="1.0" encoding="utf-8"?>' \
+              '<resources>' \
+              "    <string name=\"firebase_appcheck_debug_token\" translatable=\"false\">${CLEAN_APPCHECK_TOKEN}</string>" \
+              '</resources>' > app/src/debug/res/values/appcheck_debug.xml
             echo "Injected FIREBASE_APPCHECK_DEBUG_TOKEN for debug build."
           fi
 
