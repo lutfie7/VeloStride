@@ -1,33 +1,46 @@
 package com.example.ui.components
 
+import android.graphics.Bitmap
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.FileDownload
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Image
+import androidx.compose.material.icons.rounded.Palette
+import androidx.compose.material.icons.rounded.PlayCircle
 import androidx.compose.material.icons.rounded.Route
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Terrain
 import androidx.compose.material.icons.rounded.TextFields
+import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.UploadFile
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -36,14 +49,23 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -51,9 +73,13 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.example.core.ActivityShareHelper
 import com.example.core.Formatters
 import com.example.core.GpxSerializer
+import com.example.core.ShareCardConfig
+import com.example.core.ShareCardStyle
 import com.example.data.model.WorkoutActivity
 import com.example.data.model.WorkoutHistoryStats
 import com.example.data.model.WorkoutSessionSummary
@@ -256,7 +282,7 @@ fun PastWorkoutSessionCard(
                 points = session.routePoints,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(112.dp)
+                    .height(172.dp)
             )
 
             Spacer(Modifier.height(10.dp))
@@ -366,6 +392,7 @@ fun PastWorkoutSessionCard(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class, androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun ShareActivityDialog(
     workout: WorkoutActivity,
@@ -373,94 +400,337 @@ fun ShareActivityDialog(
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
-    val previewBitmap = remember(workout.id, workout.elevationGainMeters, workout.distanceMeters) {
-        ActivityShareHelper.renderShareCardBitmap(workout).asImageBitmap()
-    }
     val hasGpsPoints = workout.decodedPoints.size >= 2
+    var activeTab by remember { mutableIntStateOf(0) }
+    var config by remember(workout.id) {
+        mutableStateOf(
+            ShareCardConfig(
+                showMap = hasGpsPoints,
+                showHeartRate = workout.avgHeartRate > 0,
+                showCalories = workout.calories > 0 && workout.avgHeartRate == 0
+            )
+        )
+    }
+    var mapBackdrop by remember(workout.id) { mutableStateOf<Bitmap?>(null) }
+    var loadedBackdropStyle by remember(workout.id) { mutableStateOf<Boolean?>(null) }
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Share & Export Activity") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Image(
-                    bitmap = previewBitmap,
-                    contentDescription = "Shareable activity card preview",
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(1080f / 1350f)
-                        .clip(RoundedCornerShape(14.dp))
+    LaunchedEffect(workout.id, config.style, config.showMap) {
+        if (config.showMap && !config.style.isTransparent && hasGpsPoints) {
+            val needDark = config.style.isDarkMap
+            if (loadedBackdropStyle != needDark || mapBackdrop == null) {
+                val bmp = ActivityShareHelper.fetchShareCardMapBackdrop(
+                    workout = workout,
+                    darkMap = needDark
                 )
-                Button(
-                    onClick = {
-                        ActivityShareHelper.shareAsImageCard(context, workout)
-                        onDismiss()
-                    },
+                if (bmp != null) {
+                    mapBackdrop = bmp
+                    loadedBackdropStyle = needDark
+                }
+            }
+        }
+    }
+
+    val previewBitmap = remember(
+        workout.id,
+        workout.elevationGainMeters,
+        workout.distanceMeters,
+        config,
+        mapBackdrop
+    ) {
+        ActivityShareHelper.renderShareCardBitmap(
+            workout = workout,
+            config = config,
+            mapBackdrop = if (config.style.isTransparent) null else mapBackdrop
+        ).asImageBitmap()
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            shape = RoundedCornerShape(22.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 6.dp,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 20.dp)
+                .widthIn(max = 560.dp)
+                .heightIn(max = 760.dp)
+        ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .testTag("share_image_card_btn")
+                        .padding(start = 18.dp, end = 8.dp, top = 12.dp, bottom = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Rounded.Image, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Share Image Card")
-                }
-                OutlinedButton(
-                    onClick = {
-                        ActivityShareHelper.shareAsText(context, workout)
-                        onDismiss()
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("share_text_summary_btn")
-                ) {
-                    Icon(Icons.Rounded.TextFields, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Share Text Summary")
-                }
-                if (hasGpsPoints) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    Text(
+                        text = "Share & Export Activity",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                    IconButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.testTag("close_share_dialog_btn")
                     ) {
-                        if (onExportGpx != null) {
-                            OutlinedButton(
-                                onClick = {
-                                    onDismiss()
-                                    onExportGpx()
-                                },
-                                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 8.dp),
+                        Icon(Icons.Rounded.Close, contentDescription = "Close Share dialog")
+                    }
+                }
+
+                if (hasGpsPoints) {
+                    PrimaryTabRow(selectedTabIndex = activeTab) {
+                        Tab(
+                            selected = activeTab == 0,
+                            onClick = { activeTab = 0 },
+                            text = { Text("Share Card") },
+                            icon = { Icon(Icons.Rounded.Image, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                            modifier = Modifier.testTag("share_tab_card")
+                        )
+                        Tab(
+                            selected = activeTab == 1,
+                            onClick = { activeTab = 1 },
+                            text = { Text("Flyover Map") },
+                            icon = { Icon(Icons.Rounded.PlayCircle, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                            modifier = Modifier.testTag("share_tab_flyover")
+                        )
+                    }
+                }
+
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                        .padding(16.dp)
+                ) {
+                    if (activeTab == 1 && hasGpsPoints) {
+                        FlyoverMapAnimator(
+                            workout = workout,
+                            onShareSnapshot = { progress ->
+                                ActivityShareHelper.shareAsImageCard(
+                                    context = context,
+                                    workout = workout,
+                                    config = config.copy(showMap = true),
+                                    mapBackdrop = if (config.style.isTransparent) null else mapBackdrop,
+                                    progressFraction = progress
+                                )
+                                onDismiss()
+                            }
+                        )
+                    } else {
+                        // Card Preview (with subtle checkerboard when Transparent style is active)
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 310.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                        ) {
+                            if (config.style.isTransparent) {
+                                Canvas(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .aspectRatio(1080f / 1350f)
+                                ) {
+                                    val cell = 20f
+                                    val cols = (size.width / cell).toInt() + 1
+                                    val rows = (size.height / cell).toInt() + 1
+                                    for (r in 0..rows) {
+                                        for (c in 0..cols) {
+                                            val dark = (r + c) % 2 == 0
+                                            drawRect(
+                                                color = if (dark) Color(0xFF1E293B) else Color(0xFF334155),
+                                                topLeft = Offset(c * cell, r * cell),
+                                                size = Size(cell, cell)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                            Image(
+                                bitmap = previewBitmap,
+                                contentDescription = "Shareable activity card preview",
+                                contentScale = ContentScale.Fit,
                                 modifier = Modifier
-                                    .weight(1f)
-                                    .testTag("export_gpx_file_btn")
-                            ) {
-                                Icon(Icons.Rounded.FileDownload, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(Modifier.width(4.dp))
-                                Text("Save .GPX", maxLines = 1)
+                                    .fillMaxSize()
+                                    .aspectRatio(1080f / 1350f)
+                                    .clip(RoundedCornerShape(14.dp))
+                            )
+                        }
+
+                        // Style Picker
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Rounded.Palette,
+                                contentDescription = null,
+                                tint = VeloOrange,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text("Style Kartu", style = MaterialTheme.typography.labelLarge)
+                        }
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            items(ShareCardStyle.entries) { style ->
+                                FilterChip(
+                                    selected = config.style == style,
+                                    onClick = { config = config.copy(style = style) },
+                                    label = { Text(style.label, maxLines = 1) },
+                                    modifier = Modifier.testTag("share_style_${style.name.lowercase()}")
+                                )
                             }
                         }
-                        OutlinedButton(
+
+                        // Data Field Toggles
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Rounded.Tune,
+                                contentDescription = null,
+                                tint = SignalCyan,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text("Data Ditampilkan", style = MaterialTheme.typography.labelLarge)
+                        }
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            FilterChip(
+                                selected = config.showMap,
+                                onClick = { config = config.copy(showMap = !config.showMap) },
+                                label = { Text("Peta Rute") },
+                                modifier = Modifier.testTag("share_toggle_map")
+                            )
+                            FilterChip(
+                                selected = config.showDistance,
+                                onClick = { config = config.copy(showDistance = !config.showDistance) },
+                                label = { Text("Jarak") },
+                                modifier = Modifier.testTag("share_toggle_distance")
+                            )
+                            FilterChip(
+                                selected = config.showDuration,
+                                onClick = { config = config.copy(showDuration = !config.showDuration) },
+                                label = { Text("Durasi") },
+                                modifier = Modifier.testTag("share_toggle_duration")
+                            )
+                            FilterChip(
+                                selected = config.showElevation,
+                                onClick = { config = config.copy(showElevation = !config.showElevation) },
+                                label = { Text("Elevasi") },
+                                modifier = Modifier.testTag("share_toggle_elevation")
+                            )
+                            FilterChip(
+                                selected = config.showPaceOrSpeed,
+                                onClick = { config = config.copy(showPaceOrSpeed = !config.showPaceOrSpeed) },
+                                label = { Text(if (workout.parsedSport.isPaceBased) "Pace" else "Speed") },
+                                modifier = Modifier.testTag("share_toggle_pace")
+                            )
+                            FilterChip(
+                                selected = config.showHeartRate,
+                                onClick = { config = config.copy(showHeartRate = !config.showHeartRate) },
+                                label = { Text("Heart Rate") },
+                                modifier = Modifier.testTag("share_toggle_hr")
+                            )
+                            FilterChip(
+                                selected = config.showCalories,
+                                onClick = { config = config.copy(showCalories = !config.showCalories) },
+                                label = { Text("Kalori") },
+                                modifier = Modifier.testTag("share_toggle_calories")
+                            )
+                            FilterChip(
+                                selected = config.showEffort,
+                                onClick = { config = config.copy(showEffort = !config.showEffort) },
+                                label = { Text("Effort") },
+                                modifier = Modifier.testTag("share_toggle_effort")
+                            )
+                            FilterChip(
+                                selected = config.showDateAndDevice,
+                                onClick = { config = config.copy(showDateAndDevice = !config.showDateAndDevice) },
+                                label = { Text("Tanggal & Info") },
+                                modifier = Modifier.testTag("share_toggle_meta")
+                            )
+                        }
+
+                        Button(
                             onClick = {
-                                val xml = GpxSerializer.buildWorkoutGpxXml(workout)
-                                GpxSerializer.shareGpxFile(context, workout.title, xml)
+                                ActivityShareHelper.shareAsImageCard(
+                                    context = context,
+                                    workout = workout,
+                                    config = config,
+                                    mapBackdrop = if (config.style.isTransparent) null else mapBackdrop
+                                )
                                 onDismiss()
                             },
-                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 8.dp),
                             modifier = Modifier
-                                .weight(1f)
-                                .testTag("share_gpx_file_btn")
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .testTag("share_image_card_btn")
                         ) {
-                            Icon(Icons.Rounded.Route, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("Share .GPX", maxLines = 1)
+                            Icon(Icons.Rounded.Image, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Share Image Card (${config.style.label})")
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                ActivityShareHelper.shareAsText(context, workout, config)
+                                onDismiss()
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .testTag("share_text_summary_btn")
+                        ) {
+                            Icon(Icons.Rounded.TextFields, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Share Text Summary")
+                        }
+
+                        if (hasGpsPoints) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                if (onExportGpx != null) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            onDismiss()
+                                            onExportGpx()
+                                        },
+                                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 8.dp),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(48.dp)
+                                            .testTag("export_gpx_file_btn")
+                                    ) {
+                                        Icon(Icons.Rounded.FileDownload, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(Modifier.width(4.dp))
+                                        Text("Save .GPX", maxLines = 1)
+                                    }
+                                }
+                                OutlinedButton(
+                                    onClick = {
+                                        val xml = GpxSerializer.buildWorkoutGpxXml(workout)
+                                        GpxSerializer.shareGpxFile(context, workout.title, xml)
+                                        onDismiss()
+                                    },
+                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 8.dp),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(48.dp)
+                                        .testTag("share_gpx_file_btn")
+                                ) {
+                                    Icon(Icons.Rounded.Route, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Share .GPX", maxLines = 1)
+                                }
+                            }
                         }
                     }
                 }
             }
-        },
-        confirmButton = {},
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Close") }
         }
-    )
+    }
 }

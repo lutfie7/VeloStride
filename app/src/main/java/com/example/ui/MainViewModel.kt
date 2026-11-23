@@ -34,11 +34,11 @@ import com.example.data.repository.LiveVoiceCoachManager
 import com.example.data.repository.LiveVoiceCoachUiState
 import com.example.data.repository.VeloStrideRepository
 import com.example.hardware.BandSyncHelper
-import com.example.hardware.BandSyncScheduler
 import com.example.hardware.HealthConnectManager
 import com.example.hardware.HuaweiBleManager
 import com.example.hardware.LiveRecordingState
 import com.example.hardware.WorkoutRecorderController
+import com.google.firebase.Timestamp
 import com.google.firebase.firestore.FirebaseFirestoreException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
@@ -83,12 +83,6 @@ class MainViewModel(
     val healthConnectState: StateFlow<HealthConnectSnapshot> = healthConnectManager.snapshot
     val recordingState: StateFlow<LiveRecordingState> = recorderController.state
     val liveVoiceState: StateFlow<LiveVoiceCoachUiState> = liveVoiceCoach.state
-
-    val autoSyncBandWorkouts: StateFlow<Boolean> = themePreferences.isAutoSyncBandEnabled
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), true)
-
-    val lastBandAutoSyncMs: StateFlow<Long> = themePreferences.lastBandAutoSyncMs
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), 0L)
 
     private val _isBandSyncing = MutableStateFlow(false)
     val isBandSyncing: StateFlow<Boolean> = _isBandSyncing.asStateFlow()
@@ -161,19 +155,12 @@ class MainViewModel(
     val mapsGroundingState: StateFlow<UiState<MapsGroundingResult>?> = _mapsGroundingState.asStateFlow()
 
     private var lastSavedBleMac: String? = null
-    private var lastAutoSyncAttemptMs: Long = 0L
 
     init {
         viewModelScope.launch {
             repository.ensureProfileExists(currentUserId, initialDisplayName, initialPhotoUrl)
             bleManager.refreshAdapterState()
-            val hcState = healthConnectManager.checkAvailabilityAndPermissions()
-            if (autoSyncBandWorkouts.value) {
-                BandSyncScheduler.schedulePeriodicSync(appContext)
-                if (hcState == HealthConnectState.AVAILABLE_GRANTED) {
-                    autoSyncBandWorkoutsIfPermitted(force = true)
-                }
-            }
+            healthConnectManager.checkAvailabilityAndPermissions()
         }
         viewModelScope.launch {
             profileState.collect { st ->
@@ -204,37 +191,7 @@ class MainViewModel(
                             lastSyncedLabel = "Live BLE Connected"
                         )
                     )
-                    // When the smart band reconnects after a standalone workout, pull any newly finished sessions
-                    autoSyncBandWorkoutsIfPermitted(force = false)
                 }
-            }
-        }
-    }
-
-    fun setAutoSyncBandWorkouts(enabled: Boolean) {
-        viewModelScope.launch {
-            themePreferences.setAutoSyncBandEnabled(enabled)
-            if (enabled) {
-                BandSyncScheduler.schedulePeriodicSync(appContext)
-                _events.emit("Auto-Sync smart band aktif (sync otomatis setelah latihan tanpa HP)")
-                autoSyncBandWorkoutsIfPermitted(force = true)
-            } else {
-                BandSyncScheduler.cancelPeriodicSync(appContext)
-                _events.emit("Auto-Sync smart band dimatikan")
-            }
-        }
-    }
-
-    fun autoSyncBandWorkoutsIfPermitted(force: Boolean = false) {
-        if (!autoSyncBandWorkouts.value || _isBandSyncing.value) return
-        val now = System.currentTimeMillis()
-        if (!force && (now - lastAutoSyncAttemptMs) < 35_000L) return
-        lastAutoSyncAttemptMs = now
-        viewModelScope.launch {
-            val hcState = healthConnectManager.checkAvailabilityAndPermissions()
-            if (hcState == HealthConnectState.AVAILABLE_GRANTED) {
-                BandSyncScheduler.schedulePeriodicSync(appContext)
-                syncHealthConnectAndPersist(silentIfNoNewWorkouts = true)
             }
         }
     }
@@ -281,11 +238,10 @@ class MainViewModel(
                         sessions = hc.importedExercises,
                         existingExternalIds = existingExternalIds
                     )
-                    themePreferences.setLastBandAutoSyncMs(System.currentTimeMillis())
 
                     val msg = when {
                         batch.newlyImportedCount > 0 ->
-                            "${hc.lastSyncMessage} • Auto-imported ${batch.newlyImportedCount} Band workout(s) with DEM elevation!"
+                            "${hc.lastSyncMessage} • Imported ${batch.newlyImportedCount} Band workout(s) with DEM elevation!"
                         !silentIfNoNewWorkouts -> hc.lastSyncMessage
                         else -> null
                     }
@@ -509,7 +465,7 @@ class MainViewModel(
                 throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Workout AI analysis failed", e)
-                _workoutInsightState.value = UiState.Error(e.localizedMessage ?: "AI analysis failed.")
+                _workoutInsightState.value = UiState.Error(formatAiErrorMessage(e, "AI analysis failed."))
             }
         }
     }
@@ -547,7 +503,7 @@ class MainViewModel(
                 throw e
             } catch (e: Exception) {
                 Log.e(TAG, "AI Coach failed", e)
-                _coachResponseState.value = UiState.Error(e.localizedMessage ?: "AI Coach failed.")
+                _coachResponseState.value = UiState.Error(formatAiErrorMessage(e, "AI Coach failed."))
             }
         }
     }
@@ -594,8 +550,19 @@ class MainViewModel(
                 throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Maps Grounding failed", e)
-                _mapsGroundingState.value = UiState.Error(e.localizedMessage ?: "Failed to query Google Maps grounding.")
+                _mapsGroundingState.value = UiState.Error(
+                    formatAiErrorMessage(e, "Failed to query Google Maps grounding.")
+                )
             }
+        }
+    }
+
+    private fun formatAiErrorMessage(e: Exception, fallback: String): String {
+        val raw = e.localizedMessage ?: fallback
+        return if (raw.contains("App Check", ignoreCase = true) || raw.contains("403")) {
+            "$raw\n\nTip: Untuk APK hasil build GitHub, buat Debug Token di Firebase Console (App Check -> Manage debug tokens -> Add debug token) lalu masukkan UUID token ke GitHub Secret FIREBASE_APPCHECK_DEBUG_TOKEN dan build ulang."
+        } else {
+            raw
         }
     }
 
@@ -699,6 +666,10 @@ class MainViewModel(
                 ((totalDistanceM / 1000.0) * 65.0).roundToInt().coerceIn(10, 20_000)
             }
 
+            val activityTimestamp = parsed.startTimeMs
+                ?.takeIf { it > 0L && it <= System.currentTimeMillis() - 15_000L }
+                ?.let { Timestamp(Date(it)) }
+
             val workout = WorkoutActivity(
                 userId = currentUserId,
                 title = parsed.name.take(120),
@@ -720,7 +691,8 @@ class MainViewModel(
                 splits = splits.take(100).map { it.toMap() },
                 deviceName = "GPX Import",
                 elevationSource = enriched.sourceLabel,
-                notes = "Imported from GPX (${fullPoints.size} pts)"
+                notes = "Imported from GPX (${fullPoints.size} pts)",
+                createdAt = activityTimestamp
             )
 
             repository.saveWorkout(currentUserId, workout).onSuccess { newId ->

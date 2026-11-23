@@ -98,12 +98,6 @@
             android:exported="false"
             android:foregroundServiceType="location" />
 
-        <service
-            android:name=".hardware.BandAutoSyncJobService"
-            android:enabled="true"
-            android:exported="false"
-            android:permission="android.permission.BIND_JOB_SERVICE" />
-
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

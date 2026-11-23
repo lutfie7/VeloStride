@@ -194,7 +194,7 @@ class VeloStrideRepository(
                 "hrZoneSeconds" to safeZones,
                 "routePoints" to safePoints,
                 "splits" to safeSplits,
-                "createdAt" to FieldValue.serverTimestamp(),
+                "createdAt" to (workout.createdAt ?: FieldValue.serverTimestamp()),
                 "updatedAt" to FieldValue.serverTimestamp()
             )
             workout.gearId?.takeIf { it.isNotBlank() }?.let { payload["gearId"] = it.take(128) }

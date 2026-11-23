@@ -1,27 +1,8 @@
 package com.example.hardware
 
-import android.Manifest
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
-import android.app.job.JobInfo
-import android.app.job.JobParameters
-import android.app.job.JobScheduler
-import android.app.job.JobService
-import android.content.ComponentName
-import android.content.Context
-import android.content.Intent
-import android.content.pm.PackageManager
-import android.os.Build
-import android.util.Log
-import androidx.core.app.NotificationCompat
-import androidx.core.content.ContextCompat
-import com.example.MainActivity
-import com.example.R
 import com.example.core.Formatters
 import com.example.core.GpxSerializer
 import com.example.core.PerformanceEngine
-import com.example.core.ThemePreferences
 import com.example.data.model.AthleteProfile
 import com.example.data.model.DailyHealthLog
 import com.example.data.model.HealthConnectSnapshot
@@ -31,15 +12,7 @@ import com.example.data.model.TrackPoint
 import com.example.data.model.WorkoutActivity
 import com.example.data.repository.ElevationRepository
 import com.example.data.repository.VeloStrideRepository
-import com.google.firebase.Firebase
-import com.google.firebase.auth.auth
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.launch
+import com.google.firebase.Timestamp
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -99,6 +72,10 @@ object BandSyncHelper {
                 fallbackAvgHr = session.avgHeartRate
             )
 
+            val sessionTimestamp = session.startTimeMs
+                .takeIf { it > 0L && it <= System.currentTimeMillis() - 15_000L }
+                ?.let { Timestamp(Date(it)) }
+
             val workout = WorkoutActivity(
                 userId = userId,
                 title = session.title,
@@ -121,7 +98,8 @@ object BandSyncHelper {
                 deviceName = deviceLabel,
                 elevationSource = enrichedEle.sourceLabel,
                 externalId = session.externalId,
-                notes = "Auto-synced from standalone band session (${session.sourcePackage.substringAfterLast('.').ifBlank { "wearable" }})"
+                notes = "Synced from smart band via Health Connect (${session.sourcePackage.substringAfterLast('.').ifBlank { "wearable" }})",
+                createdAt = sessionTimestamp
             )
 
             if (repository.saveWorkout(userId, workout).isSuccess) {
@@ -158,7 +136,6 @@ object BandSyncHelper {
         }
         val splits = mutableListOf<SplitKm>()
         var cumDistM = 0.0
-        var splitStartDistM = 0.0
         var splitEleGain = 0.0
         val hrBucket = mutableListOf<Int>()
         var nextKmThreshold = 1000.0
@@ -184,7 +161,6 @@ object BandSyncHelper {
                         avgHr = if (hrBucket.isNotEmpty()) hrBucket.average().roundToInt() else fallbackAvgHr
                     )
                 )
-                splitStartDistM = cumDistM
                 splitEleGain = 0.0
                 hrBucket.clear()
                 nextKmThreshold += 1000.0
@@ -247,162 +223,5 @@ object BandSyncHelper {
             recoveryScore = recoveryScore,
             sourceDevice = source
         )
-    }
-}
-
-object BandSyncNotifier {
-    private const val CHANNEL_ID = "velostride_band_sync"
-    private const val NOTIF_ID = 4102
-
-    fun notifyNewBandWorkouts(context: Context, batch: BandImportBatchResult) {
-        if (batch.newlyImportedCount <= 0) return
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            val granted = ContextCompat.checkSelfPermission(
-                context,
-                Manifest.permission.POST_NOTIFICATIONS
-            ) == PackageManager.PERMISSION_GRANTED
-            if (!granted) return
-        }
-
-        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "Smart Band Auto-Sync",
-                NotificationManager.IMPORTANCE_DEFAULT
-            ).apply {
-                description = "Notifies when standalone workouts from HUAWEI Band 11 Pro sync to VeloStride"
-            }
-            manager.createNotificationChannel(channel)
-        }
-
-        val openIntent = Intent(context, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-        }
-        val pending = PendingIntent.getActivity(
-            context,
-            0,
-            openIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        val title = if (batch.newlyImportedCount == 1) {
-            "Band Workout Synced: ${batch.latestImportedTitle ?: "Activity"}"
-        } else {
-            "${batch.newlyImportedCount} Smart Band Workouts Synced"
-        }
-        val body = buildString {
-            if (batch.latestImportedDistanceMeters > 0.0) {
-                append(Formatters.formatDistanceKm(batch.latestImportedDistanceMeters))
-                append(" • Elev +${batch.latestImportedElevationMeters.roundToInt()}m")
-            } else {
-                append("Synced automatically with DEM elevation & HR analysis.")
-            }
-        }
-
-        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle(title)
-            .setContentText(body)
-            .setContentIntent(pending)
-            .setAutoCancel(true)
-            .build()
-
-        manager.notify(NOTIF_ID, notification)
-    }
-}
-
-object BandSyncScheduler {
-    private const val JOB_ID = 7711
-    private const val TAG = "BandSyncScheduler"
-
-    fun schedulePeriodicSync(context: Context) {
-        val scheduler = context.getSystemService(Context.JOB_SCHEDULER_SERVICE) as? JobScheduler ?: return
-        val existing = scheduler.getPendingJob(JOB_ID)
-        if (existing != null) return
-        val component = ComponentName(context, BandAutoSyncJobService::class.java)
-        val jobInfo = JobInfo.Builder(JOB_ID, component)
-            .setPeriodic(15 * 60_000L)
-            .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
-            .build()
-        val result = scheduler.schedule(jobInfo)
-        Log.d(TAG, "Scheduled periodic smart band sync: result=$result")
-    }
-
-    fun cancelPeriodicSync(context: Context) {
-        val scheduler = context.getSystemService(Context.JOB_SCHEDULER_SERVICE) as? JobScheduler ?: return
-        scheduler.cancel(JOB_ID)
-    }
-}
-
-class BandAutoSyncJobService : JobService() {
-    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private var activeJob: Job? = null
-
-    override fun onStartJob(params: JobParameters?): Boolean {
-        val appCtx = applicationContext
-        activeJob = serviceScope.launch {
-            try {
-                val prefs = ThemePreferences(appCtx)
-                if (!prefs.isAutoSyncBandEnabled.first()) {
-                    jobFinished(params, false)
-                    return@launch
-                }
-                val uid = Firebase.auth.currentUser?.uid
-                if (uid.isNullOrBlank()) {
-                    jobFinished(params, false)
-                    return@launch
-                }
-
-                val hcManager = HealthConnectManager(appCtx)
-                val hcResult = hcManager.syncHealthData()
-                hcResult.onSuccess { hc ->
-                    val repository = VeloStrideRepository(appCtx)
-                    val elevationRepo = ElevationRepository()
-                    val existingIds = repository.fetchExistingWorkoutExternalIds(uid)
-                    val batch = BandSyncHelper.persistImportedBandWorkouts(
-                        repository = repository,
-                        elevationRepository = elevationRepo,
-                        userId = uid,
-                        profile = AthleteProfile(userId = uid),
-                        sessions = hc.importedExercises,
-                        existingExternalIds = existingIds
-                    )
-                    repository.upsertDailyHealthLog(
-                        uid,
-                        BandSyncHelper.buildDailyHealthLog(
-                            userId = uid,
-                            hc = hc,
-                            restingHrFallback = 54,
-                            vo2MaxFallback = 45.0,
-                            recoveryScore = 75
-                        )
-                    )
-                    prefs.setLastBandAutoSyncMs(System.currentTimeMillis())
-                    if (batch.newlyImportedCount > 0) {
-                        BandSyncNotifier.notifyNewBandWorkouts(appCtx, batch)
-                    }
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Background band sync skipped: ${e.message}")
-            } finally {
-                jobFinished(params, false)
-            }
-        }
-        return true
-    }
-
-    override fun onStopJob(params: JobParameters?): Boolean {
-        activeJob?.cancel()
-        return true
-    }
-
-    override fun onDestroy() {
-        serviceScope.cancel()
-        super.onDestroy()
-    }
-
-    private companion object {
-        const val TAG = "BandAutoSyncJob"
     }
 }

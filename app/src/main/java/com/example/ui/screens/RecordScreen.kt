@@ -328,7 +328,7 @@ fun RecordScreen(
                         points = rec.trackPoints,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(130.dp)
+                            .height(172.dp)
                     )
 
                     Row(

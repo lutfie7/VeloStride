@@ -83,8 +83,6 @@ fun WearablesScreen(viewModel: MainViewModel) {
     val hc by viewModel.healthConnectState.collectAsStateWithLifecycle()
     val devicesState by viewModel.devicesState.collectAsStateWithLifecycle()
     val healthLogsState by viewModel.healthLogsState.collectAsStateWithLifecycle()
-    val autoSyncBand by viewModel.autoSyncBandWorkouts.collectAsStateWithLifecycle()
-    val lastBandSyncMs by viewModel.lastBandAutoSyncMs.collectAsStateWithLifecycle()
     val isBandSyncing by viewModel.isBandSyncing.collectAsStateWithLifecycle()
 
     val savedDevices = (devicesState as? UiState.Success)?.data.orEmpty()
@@ -437,43 +435,6 @@ fun WearablesScreen(viewModel: MainViewModel) {
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                        }
-                    }
-
-                    Surface(
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 12.dp, vertical = 10.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "Auto-Sync Latihan Band (Tanpa HP)",
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                val lastSyncText = if (lastBandSyncMs > 0L) {
-                                    "Terakhir cek: ${com.example.core.Formatters.formatDateTime(com.google.firebase.Timestamp(java.util.Date(lastBandSyncMs)))}"
-                                } else {
-                                    "Otomatis ambil latihan selesai dari HUAWEI Band via Health Connect & isi elevasi DEM."
-                                }
-                                Text(
-                                    text = lastSyncText,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Switch(
-                                checked = autoSyncBand,
-                                onCheckedChange = { viewModel.setAutoSyncBandWorkouts(it) },
-                                modifier = Modifier.testTag("band_auto_sync_switch")
-                            )
                         }
                     }
 

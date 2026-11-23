@@ -252,6 +252,9 @@ object GpxSerializer {
         var trkName: String? = null
         var rteName: String? = null
         var rawType: String? = null
+        var metadataTimeMs: Long? = null
+        var trkTimeMs: Long? = null
+        var rteTimeMs: Long? = null
 
         var inMetadata = false
         var inTrk = false
@@ -310,8 +313,14 @@ object GpxSerializer {
                     "ele" -> if (activePointTag != null) {
                         curEle = text.toDoubleOrNull() ?: 0.0
                     }
-                    "time" -> if (activePointTag != null) {
-                        curTimeMs = parseIsoTimestampMs(text) ?: 0L
+                    "time" -> if (text.isNotBlank()) {
+                        val parsedMs = parseIsoTimestampMs(text)
+                        when {
+                            activePointTag != null -> curTimeMs = parsedMs ?: 0L
+                            inTrk && trkTimeMs == null -> trkTimeMs = parsedMs
+                            inRte && rteTimeMs == null -> rteTimeMs = parsedMs
+                            inMetadata && metadataTimeMs == null -> metadataTimeMs = parsedMs
+                        }
                     }
                     "hr", "heartrate" -> if (activePointTag != null) {
                         curHr = text.toIntOrNull()?.coerceIn(0, 240) ?: 0
@@ -370,6 +379,8 @@ object GpxSerializer {
         val resolvedSport = mapGpxTypeToSport(rawType, resolvedName)
         val validTimes = selectedTimestamps.filter { it > 0L }
         val avgCad = if (cadenceSamples.isNotEmpty()) cadenceSamples.average().roundToInt() else 0
+        val resolvedStartMs = validTimes.minOrNull() ?: trkTimeMs ?: rteTimeMs ?: metadataTimeMs
+        val resolvedEndMs = validTimes.maxOrNull() ?: resolvedStartMs
 
         return ParsedGpxData(
             name = resolvedName,
@@ -377,8 +388,8 @@ object GpxSerializer {
             points = selectedPoints,
             timestampsMs = selectedTimestamps,
             avgCadence = avgCad,
-            startTimeMs = validTimes.minOrNull(),
-            endTimeMs = validTimes.maxOrNull()
+            startTimeMs = resolvedStartMs,
+            endTimeMs = resolvedEndMs
         )
     }
 
@@ -434,25 +445,41 @@ object GpxSerializer {
         return sdf.format(Date(timeMs))
     }
 
-    private fun parseIsoTimestampMs(raw: String): Long? {
+    internal fun parseIsoTimestampMs(raw: String): Long? {
         if (raw.isBlank()) return null
-        val cleaned = raw.trim()
+        val trimmed = raw.trim()
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            runCatching { return java.time.OffsetDateTime.parse(trimmed).toInstant().toEpochMilli() }
+            runCatching { return java.time.Instant.parse(trimmed).toEpochMilli() }
+            runCatching {
+                return java.time.LocalDateTime.parse(trimmed)
+                    .toInstant(java.time.ZoneOffset.UTC)
+                    .toEpochMilli()
+            }
+        }
+        val cleaned = trimmed
+            // Truncate sub-millisecond digits (e.g. .123456 -> .123) or pad short fractions (e.g. .5 -> .500)
+            .replace(Regex("\\.(\\d{1,9})")) { m ->
+                "." + m.groupValues[1].padEnd(3, '0').take(3)
+            }
+            // Convert +07:00 / -05:00 to RFC822 +0700 / -0500
             .replace(Regex("([+-]\\d{2}):(\\d{2})$"), "$1$2")
+            // Convert trailing 'Z' into +0000 for consistent SimpleDateFormat Z parsing
+            .let { if (it.endsWith("Z", ignoreCase = true)) it.dropLast(1) + "+0000" else it }
+
         val patterns = listOf(
-            "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
-            "yyyy-MM-dd'T'HH:mm:ss'Z'",
             "yyyy-MM-dd'T'HH:mm:ss.SSSZ",
             "yyyy-MM-dd'T'HH:mm:ssZ",
+            "yyyy-MM-dd'T'HH:mm:ss.SSS",
+            "yyyy-MM-dd'T'HH:mm:ss",
+            "yyyy-MM-dd HH:mm:ssZ",
             "yyyy-MM-dd HH:mm:ss"
         )
         for (pattern in patterns) {
             try {
                 val sdf = SimpleDateFormat(pattern, Locale.US).apply {
-                    if (!pattern.endsWith("Z")) {
-                        timeZone = TimeZone.getTimeZone("UTC")
-                    } else if (pattern.contains("'Z'")) {
-                        timeZone = TimeZone.getTimeZone("UTC")
-                    }
+                    isLenient = false
+                    timeZone = TimeZone.getTimeZone("UTC")
                 }
                 val parsed = sdf.parse(cleaned)
                 if (parsed != null) return parsed.time

@@ -37,6 +37,7 @@ jobs:
         env:
           GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
           DEBUG_KEYSTORE_BASE64: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
+          FIREBASE_APPCHECK_DEBUG_TOKEN: ${{ secrets.FIREBASE_APPCHECK_DEBUG_TOKEN }}
         run: |
           GENERATED=false
           if [ ! -f debug.keystore ]; then
@@ -82,6 +83,17 @@ jobs:
           fi
           if [ ! -f app/google-services.json ]; then
             echo "::warning::app/google-services.json not found. Add GOOGLE_SERVICES_JSON secret in GitHub repo settings to enable Google Sign-In and Firebase in the built APK."
+          fi
+          CLEAN_APPCHECK_TOKEN=$(printf '%s' "$FIREBASE_APPCHECK_DEBUG_TOKEN" | tr -d '[:space:]')
+          if [ -n "$CLEAN_APPCHECK_TOKEN" ]; then
+            mkdir -p app/src/debug/res/values
+            cat > app/src/debug/res/values/appcheck_debug.xml <<EOF
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="firebase_appcheck_debug_token" translatable="false">${CLEAN_APPCHECK_TOKEN}</string>
+</resources>
+EOF
+            echo "Injected FIREBASE_APPCHECK_DEBUG_TOKEN for debug build."
           fi
 
       - name: Upload one-time keystore setup files (if newly generated)

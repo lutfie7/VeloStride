@@ -1,26 +1,31 @@
 package com.example.ui.components
 
+import android.annotation.SuppressLint
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -35,11 +40,21 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.example.core.Formatters
+import com.example.core.MapProjection
+import com.example.core.MapViewport
 import com.example.data.model.FitnessLoadPoint
 import com.example.data.model.TrackPoint
 import com.example.ui.theme.AmberZone
@@ -57,92 +72,289 @@ import com.example.ui.theme.Zone5Color
 import kotlin.math.roundToInt
 
 @Composable
+fun MapTileBackground(
+    viewport: MapViewport,
+    widthPx: Float,
+    heightPx: Float,
+    darkTheme: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    val density = LocalDensity.current
+    val tiles = remember(viewport, widthPx, heightPx, darkTheme) {
+        MapProjection.visibleTiles(viewport, widthPx, heightPx, darkTheme)
+    }
+
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(if (darkTheme) Color(0xFF10151E) else Color(0xFFECEAE4))
+    ) {
+        tiles.forEach { tile ->
+            key(tile.zoom, tile.x, tile.y, darkTheme) {
+                val sizeDp = with(density) { (tile.sizePx + 1.5f).toDp() }
+                val request = remember(tile.url) {
+                    ImageRequest.Builder(context)
+                        .data(tile.url)
+                        .addHeader("User-Agent", "VeloStride/1.0 (Android Fitness Tracker)")
+                        .crossfade(true)
+                        .build()
+                }
+                AsyncImage(
+                    model = request,
+                    contentDescription = null,
+                    contentScale = ContentScale.FillBounds,
+                    modifier = Modifier
+                        .offset { IntOffset(tile.leftPx.roundToInt(), tile.topPx.roundToInt()) }
+                        .size(sizeDp)
+                )
+            }
+        }
+        // Subtle scrim so route stroke stays crisp over map streets & labels
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    if (darkTheme) Color.Black.copy(alpha = 0.14f)
+                    else Color.White.copy(alpha = 0.08f)
+                )
+        )
+    }
+}
+
+@Composable
+fun MapAttributionBadge(
+    darkTheme: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        color = if (darkTheme) Color.Black.copy(alpha = 0.55f) else Color.White.copy(alpha = 0.78f),
+        shape = RoundedCornerShape(6.dp),
+        modifier = modifier
+    ) {
+        Text(
+            text = "© CARTO • OSM",
+            fontSize = 9.sp,
+            color = if (darkTheme) Color.White.copy(alpha = 0.78f) else Color(0xFF334155),
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+        )
+    }
+}
+
+@SuppressLint("UnusedBoxWithConstraintsScope")
+@Composable
 fun RoutePolylineCanvas(
     points: List<TrackPoint>,
     modifier: Modifier = Modifier,
     strokeColor: Color = VeloOrange,
     showGrid: Boolean = true,
 ) {
+    val darkTheme = MaterialTheme.colorScheme.surface.luminance() < 0.5f
     val gridColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)
     val bgTop = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f)
     val bgBottom = MaterialTheme.colorScheme.surface
+    val density = LocalDensity.current
 
-    Canvas(
-        modifier = modifier
-            .clip(RoundedCornerShape(14.dp))
-            .background(Brush.verticalGradient(listOf(bgTop, bgBottom)))
-    ) {
-        if (showGrid) {
-            val cols = 6
-            val rows = 4
-            for (c in 1 until cols) {
-                val x = size.width * (c / cols.toFloat())
-                drawLine(gridColor, Offset(x, 0f), Offset(x, size.height), strokeWidth = 1f)
-            }
-            for (r in 1 until rows) {
-                val y = size.height * (r / rows.toFloat())
-                drawLine(gridColor, Offset(0f, y), Offset(size.width, y), strokeWidth = 1f)
-            }
-        }
-
-        if (points.size < 2) {
-            // Subtle contour placeholder arc when workout was logged manually without GPS points
-            val path = Path().apply {
-                moveTo(size.width * 0.12f, size.height * 0.72f)
-                cubicTo(
-                    size.width * 0.35f, size.height * 0.22f,
-                    size.width * 0.65f, size.height * 0.80f,
-                    size.width * 0.88f, size.height * 0.30f
+    if (points.size < 2) {
+        Box(
+            modifier = modifier
+                .clip(RoundedCornerShape(14.dp))
+                .background(Brush.verticalGradient(listOf(bgTop, bgBottom)))
+        ) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                if (showGrid) {
+                    val cols = 6
+                    val rows = 4
+                    for (c in 1 until cols) {
+                        val x = size.width * (c / cols.toFloat())
+                        drawLine(gridColor, Offset(x, 0f), Offset(x, size.height), strokeWidth = 1f)
+                    }
+                    for (r in 1 until rows) {
+                        val y = size.height * (r / rows.toFloat())
+                        drawLine(gridColor, Offset(0f, y), Offset(size.width, y), strokeWidth = 1f)
+                    }
+                }
+                val path = Path().apply {
+                    moveTo(size.width * 0.12f, size.height * 0.72f)
+                    cubicTo(
+                        size.width * 0.35f, size.height * 0.22f,
+                        size.width * 0.65f, size.height * 0.80f,
+                        size.width * 0.88f, size.height * 0.30f
+                    )
+                }
+                drawPath(
+                    path = path,
+                    color = strokeColor.copy(alpha = 0.45f),
+                    style = Stroke(width = 5f, cap = StrokeCap.Round)
                 )
             }
+            Surface(
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.75f),
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(8.dp)
+            ) {
+                Text(
+                    text = "Indoor / No GPS track",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                )
+            }
+        }
+        return
+    }
+
+    BoxWithConstraints(
+        modifier = modifier
+            .clip(RoundedCornerShape(14.dp))
+            .background(if (darkTheme) Color(0xFF10151E) else Color(0xFFECEAE4))
+    ) {
+        val widthPx = with(density) { maxWidth.toPx() }.coerceAtLeast(16f)
+        val heightPx = with(density) { maxHeight.toPx() }.coerceAtLeast(16f)
+        val padPx = with(density) { 26.dp.toPx() }
+        val viewport = remember(points, widthPx, heightPx, padPx) {
+            MapProjection.computeViewportForPoints(
+                points = points,
+                widthPx = widthPx,
+                heightPx = heightPx,
+                paddingPx = padPx
+            )
+        }
+
+        MapTileBackground(
+            viewport = viewport,
+            widthPx = widthPx,
+            heightPx = heightPx,
+            darkTheme = darkTheme
+        )
+
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val mapped = points.map { pt ->
+                val (px, py) = MapProjection.project(pt.lat, pt.lng, viewport, size.width, size.height)
+                Offset(px, py)
+            }
+
+            val path = Path().apply {
+                moveTo(mapped.first().x, mapped.first().y)
+                for (i in 1 until mapped.size) {
+                    lineTo(mapped[i].x, mapped[i].y)
+                }
+            }
+
+            // Outer shadow & glow so route reads cleanly over both dark and bright streets
             drawPath(
                 path = path,
-                color = strokeColor.copy(alpha = 0.45f),
-                style = Stroke(width = 5f, cap = StrokeCap.Round)
+                color = Color.Black.copy(alpha = if (darkTheme) 0.45f else 0.25f),
+                style = Stroke(width = 12f, cap = StrokeCap.Round, join = StrokeJoin.Round)
             )
-            return@Canvas
+            drawPath(
+                path = path,
+                color = strokeColor.copy(alpha = 0.30f),
+                style = Stroke(width = 16f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+            )
+            drawPath(
+                path = path,
+                color = strokeColor,
+                style = Stroke(width = 6.5f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+            )
+
+            // Start & End markers
+            drawCircle(color = EmeraldPeak, radius = 9.5f, center = mapped.first())
+            drawCircle(color = Color.White, radius = 4f, center = mapped.first())
+            drawCircle(color = CrimsonPulse, radius = 9.5f, center = mapped.last())
+            drawCircle(color = Color.White, radius = 4f, center = mapped.last())
         }
 
-        val minLat = points.minOf { it.lat }
-        val maxLat = points.maxOf { it.lat }
-        val minLng = points.minOf { it.lng }
-        val maxLng = points.maxOf { it.lng }
-        val latSpan = (maxLat - minLat).coerceAtLeast(0.0005)
-        val lngSpan = (maxLng - minLng).coerceAtLeast(0.0005)
-        val pad = 24f
-        val drawW = (size.width - pad * 2).coerceAtLeast(10f)
-        val drawH = (size.height - pad * 2).coerceAtLeast(10f)
+        MapAttributionBadge(
+            darkTheme = darkTheme,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(6.dp)
+        )
+    }
+}
 
-        val mapped = points.map { pt ->
-            val x = pad + ((pt.lng - minLng) / lngSpan).toFloat() * drawW
-            val y = size.height - pad - ((pt.lat - minLat) / latSpan).toFloat() * drawH
-            Offset(x, y)
+@SuppressLint("UnusedBoxWithConstraintsScope")
+@Composable
+fun MultiTrackMapCanvas(
+    tracks: List<List<TrackPoint>>,
+    modifier: Modifier = Modifier,
+) {
+    val darkTheme = MaterialTheme.colorScheme.surface.luminance() < 0.5f
+    val allPoints = remember(tracks) { tracks.flatten() }
+    val density = LocalDensity.current
+
+    if (allPoints.size < 2) {
+        Box(
+            modifier = modifier
+                .clip(RoundedCornerShape(16.dp))
+                .background(if (darkTheme) Color(0xFF0A0D12) else MaterialTheme.colorScheme.surfaceVariant),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = "Record or import GPS workouts to build your heatmap",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(16.dp)
+            )
+        }
+        return
+    }
+
+    BoxWithConstraints(
+        modifier = modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(if (darkTheme) Color(0xFF0A0D12) else Color(0xFFECEAE4))
+    ) {
+        val widthPx = with(density) { maxWidth.toPx() }.coerceAtLeast(16f)
+        val heightPx = with(density) { maxHeight.toPx() }.coerceAtLeast(16f)
+        val padPx = with(density) { 28.dp.toPx() }
+        val viewport = remember(allPoints, widthPx, heightPx, padPx) {
+            MapProjection.computeViewportForPoints(
+                points = allPoints,
+                widthPx = widthPx,
+                heightPx = heightPx,
+                paddingPx = padPx
+            )
         }
 
-        val path = Path().apply {
-            moveTo(mapped.first().x, mapped.first().y)
-            for (i in 1 until mapped.size) {
-                lineTo(mapped[i].x, mapped[i].y)
+        MapTileBackground(
+            viewport = viewport,
+            widthPx = widthPx,
+            heightPx = heightPx,
+            darkTheme = darkTheme
+        )
+
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            tracks.forEach { track ->
+                if (track.size >= 2) {
+                    val path = Path()
+                    track.forEachIndexed { idx, pt ->
+                        val (px, py) = MapProjection.project(pt.lat, pt.lng, viewport, size.width, size.height)
+                        if (idx == 0) path.moveTo(px, py) else path.lineTo(px, py)
+                    }
+                    drawPath(
+                        path,
+                        VeloOrange.copy(alpha = 0.28f),
+                        style = Stroke(width = 16f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                    )
+                    drawPath(
+                        path,
+                        Color(0xFFFFB703).copy(alpha = 0.85f),
+                        style = Stroke(width = 5f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                    )
+                }
             }
         }
 
-        // Glow under-stroke
-        drawPath(
-            path = path,
-            color = strokeColor.copy(alpha = 0.25f),
-            style = Stroke(width = 14f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+        MapAttributionBadge(
+            darkTheme = darkTheme,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(8.dp)
         )
-        drawPath(
-            path = path,
-            color = strokeColor,
-            style = Stroke(width = 6f, cap = StrokeCap.Round, join = StrokeJoin.Round)
-        )
-
-        // Start & End markers
-        drawCircle(color = EmeraldPeak, radius = 9f, center = mapped.first())
-        drawCircle(color = Color.White, radius = 4f, center = mapped.first())
-        drawCircle(color = CrimsonPulse, radius = 9f, center = mapped.last())
-        drawCircle(color = Color.White, radius = 4f, center = mapped.last())
     }
 }
 

@@ -11,6 +11,7 @@ import com.google.firebase.appcheck.recaptcha.RecaptchaAppCheckProviderFactory
 
 private const val TAG = "AppCheckInit"
 private const val DEBUG_TOKEN_EXTRA = "FIREBASE_APPCHECK_DEBUG_TOKEN"
+private const val DEBUG_TOKEN_RES = "firebase_appcheck_debug_token"
 private const val DEBUG_STORE_PREFIX = "com.google.firebase.appcheck.debug.store."
 private const val DEBUG_SECRET_KEY = "com.google.firebase.appcheck.debug.DEBUG_SECRET"
 private const val RECAPTCHA_SITE_KEY_RES = "recaptcha_site_key"
@@ -20,9 +21,19 @@ fun configureAppCheck(context: Context, intent: Intent?) {
         if (FirebaseApp.getApps(context).isEmpty()) {
             FirebaseApp.initializeApp(context)
         }
+        if (FirebaseApp.getApps(context).isEmpty()) {
+            Log.w(TAG, "FirebaseApp is not initialized; skipping App Check setup.")
+            return
+        }
 
         if (BuildConfig.DEBUG) {
-            val debugToken = intent?.getStringExtra(DEBUG_TOKEN_EXTRA)
+            val intentToken = intent?.getStringExtra(DEBUG_TOKEN_EXTRA)?.trim()?.takeIf { it.isNotEmpty() }
+            val buildResToken = if (intentToken == null) {
+                val resId = context.resources.getIdentifier(DEBUG_TOKEN_RES, "string", context.packageName)
+                if (resId != 0) runCatching { context.getString(resId) }.getOrNull()?.trim()?.takeIf { it.isNotEmpty() } else null
+            } else null
+
+            val debugToken = intentToken ?: buildResToken
             if (!debugToken.isNullOrEmpty()) {
                 val persistenceKey = FirebaseApp.getInstance().persistenceKey
                 val prefs = context.getSharedPreferences(
@@ -34,7 +45,7 @@ fun configureAppCheck(context: Context, intent: Intent?) {
                     .commit()
                 Log.d(TAG, "App Check debug secret configured successfully.")
             } else {
-                Log.w(TAG, "No debug token found in Intent extra.")
+                Log.w(TAG, "No debug token found in Intent extra or build resource.")
             }
 
             FirebaseAppCheck.getInstance().installAppCheckProviderFactory(

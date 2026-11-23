@@ -14,6 +14,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -39,6 +40,7 @@ import androidx.compose.material.icons.rounded.Explore
 import androidx.compose.material.icons.rounded.FileDownload
 import androidx.compose.material.icons.rounded.LocalFireDepartment
 import androidx.compose.material.icons.rounded.Place
+import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material.icons.rounded.Route
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Star
@@ -66,6 +68,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -81,9 +84,11 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
@@ -96,6 +101,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
 import com.example.core.Formatters
 import com.example.core.GpxSerializer
+import com.example.core.MapProjection
 import com.example.data.model.MapsGroundingResult
 import com.example.data.model.SavedRoute
 import com.example.data.model.SegmentRecord
@@ -104,7 +110,10 @@ import com.example.data.model.TrackPoint
 import com.example.data.model.UiState
 import com.example.data.model.WorkoutActivity
 import com.example.ui.MainViewModel
+import com.example.ui.components.MapAttributionBadge
+import com.example.ui.components.MapTileBackground
 import com.example.ui.components.MetricCell
+import com.example.ui.components.MultiTrackMapCanvas
 import com.example.ui.components.RoutePolylineCanvas
 import com.example.ui.components.SportBadge
 import com.example.ui.components.SportSelectorGrid
@@ -114,7 +123,6 @@ import com.example.ui.theme.SignalCyan
 import com.example.ui.theme.VeloOrange
 import com.google.android.gms.location.LocationServices
 import kotlin.math.abs
-import kotlin.math.roundToInt
 import kotlin.math.sin
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -410,7 +418,7 @@ private fun RouteExplorerList(
                             points = route.decodedWaypoints,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(110.dp)
+                                .height(172.dp)
                         )
                         Spacer(Modifier.height(10.dp))
                         Row(
@@ -650,19 +658,49 @@ private fun NearbyMapsGroundingView(
     }
 }
 
+@SuppressLint("MissingPermission", "UnusedBoxWithConstraintsScope")
 @Composable
 private fun InteractiveRouteBuilder(
     workouts: List<WorkoutActivity>,
     onSaveRoute: (String, SportType, String, List<TrackPoint>, Double, Double) -> Unit,
 ) {
-    val baseLat = workouts.firstOrNull()?.decodedPoints?.firstOrNull()?.lat ?: -6.2185
-    val baseLng = workouts.firstOrNull()?.decodedPoints?.firstOrNull()?.lng ?: 106.8020
+    val context = LocalContext.current
+    val density = LocalDensity.current
+    val darkTheme = MaterialTheme.colorScheme.surface.luminance() < 0.5f
 
-    val canvasOffsets = remember { mutableStateListOf<Offset>() }
+    val workoutSeed = workouts.firstOrNull()?.decodedPoints?.firstOrNull()
+    var centerLat by remember { mutableDoubleStateOf(workoutSeed?.lat ?: -6.2185) }
+    var centerLng by remember { mutableDoubleStateOf(workoutSeed?.lng ?: 106.8020) }
+    var zoomLevel by remember { mutableIntStateOf(14) }
+
     val trackPoints = remember { mutableStateListOf<TrackPoint>() }
     var routeName by remember { mutableStateOf("") }
     var selectedSport by remember { mutableStateOf(SportType.RUN) }
     var surfaceType by remember { mutableStateOf("Paved") }
+
+    LaunchedEffect(Unit) {
+        if (workoutSeed == null) {
+            val hasLocation = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED ||
+                ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+                ) == PackageManager.PERMISSION_GRANTED
+            if (hasLocation) {
+                runCatching {
+                    LocationServices.getFusedLocationProviderClient(context).lastLocation
+                        .addOnSuccessListener { loc ->
+                            if (loc != null && trackPoints.isEmpty()) {
+                                centerLat = loc.latitude
+                                centerLng = loc.longitude
+                            }
+                        }
+                }
+            }
+        }
+    }
 
     val totalDistanceMeters = remember(trackPoints.size) {
         if (trackPoints.size < 2) 0.0
@@ -678,8 +716,6 @@ private fun InteractiveRouteBuilder(
             (trackPoints[idx].ele - trackPoints[idx - 1].ele).coerceAtLeast(0.0)
         }
     }
-
-    val gridColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -698,9 +734,9 @@ private fun InteractiveRouteBuilder(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(Modifier.weight(1f)) {
-                            Text("Interactive Route Canvas", style = MaterialTheme.typography.titleLarge)
+                            Text("Interactive Route Map", style = MaterialTheme.typography.titleLarge)
                             Text(
-                                "Tap anywhere on the grid to plot GPS waypoints",
+                                "Tap on the map streets to plot GPS waypoints",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -708,22 +744,18 @@ private fun InteractiveRouteBuilder(
                         Row {
                             IconButton(
                                 onClick = {
-                                    if (canvasOffsets.isNotEmpty()) {
-                                        canvasOffsets.removeAt(canvasOffsets.lastIndex)
+                                    if (trackPoints.isNotEmpty()) {
                                         trackPoints.removeAt(trackPoints.lastIndex)
                                     }
                                 },
-                                enabled = canvasOffsets.isNotEmpty(),
+                                enabled = trackPoints.isNotEmpty(),
                                 modifier = Modifier.testTag("route_builder_undo_btn")
                             ) {
                                 Icon(Icons.Rounded.Undo, contentDescription = "Undo waypoint")
                             }
                             IconButton(
-                                onClick = {
-                                    canvasOffsets.clear()
-                                    trackPoints.clear()
-                                },
-                                enabled = canvasOffsets.isNotEmpty(),
+                                onClick = { trackPoints.clear() },
+                                enabled = trackPoints.isNotEmpty(),
                                 modifier = Modifier.testTag("route_builder_clear_btn")
                             ) {
                                 Icon(Icons.Rounded.Clear, contentDescription = "Clear route")
@@ -733,63 +765,135 @@ private fun InteractiveRouteBuilder(
 
                     Spacer(Modifier.height(10.dp))
 
-                    Canvas(
+                    BoxWithConstraints(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(230.dp)
+                            .height(270.dp)
                             .clip(RoundedCornerShape(14.dp))
-                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f))
-                            .pointerInput(Unit) {
-                                detectTapGestures { tap ->
-                                    canvasOffsets.add(tap)
-                                    val w = size.width.toFloat().coerceAtLeast(1f)
-                                    val h = size.height.toFloat().coerceAtLeast(1f)
-                                    // Map 2D canvas tap (~5km x 5km window) to real GPS coordinates
-                                    val normX = (tap.x / w) - 0.5f
-                                    val normY = 0.5f - (tap.y / h)
-                                    val lat = baseLat + normY * 0.045
-                                    val lng = baseLng + normX * 0.045
-                                    val ele = 18.0 + abs(sin((normX + normY) * 6.0)) * 95.0
-                                    trackPoints.add(TrackPoint(lat = lat, lng = lng, ele = ele, hr = 0))
-                                }
-                            }
-                            .testTag("route_builder_canvas")
+                            .background(if (darkTheme) Color(0xFF10151E) else Color(0xFFECEAE4))
                     ) {
-                        for (c in 1..7) {
-                            val x = size.width * (c / 8f)
-                            drawLine(gridColor, Offset(x, 0f), Offset(x, size.height), 1f)
+                        val widthPx = with(density) { maxWidth.toPx() }.coerceAtLeast(16f)
+                        val heightPx = with(density) { maxHeight.toPx() }.coerceAtLeast(16f)
+                        val viewport = remember(centerLat, centerLng, zoomLevel) {
+                            MapProjection.computeViewportForCenter(
+                                centerLat = centerLat,
+                                centerLng = centerLng,
+                                zoom = zoomLevel
+                            )
                         }
-                        for (r in 1..5) {
-                            val y = size.height * (r / 6f)
-                            drawLine(gridColor, Offset(0f, y), Offset(size.width, y), 1f)
+
+                        MapTileBackground(
+                            viewport = viewport,
+                            widthPx = widthPx,
+                            heightPx = heightPx,
+                            darkTheme = darkTheme
+                        )
+
+                        Canvas(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .pointerInput(viewport) {
+                                    detectTapGestures { tap ->
+                                        val w = size.width.toFloat().coerceAtLeast(1f)
+                                        val h = size.height.toFloat().coerceAtLeast(1f)
+                                        val (lat, lng) = MapProjection.unproject(tap.x, tap.y, viewport, w, h)
+                                        val ele = 18.0 + abs(sin((lat + lng) * 120.0)) * 65.0
+                                        trackPoints.add(TrackPoint(lat = lat, lng = lng, ele = ele, hr = 0))
+                                    }
+                                }
+                                .testTag("route_builder_canvas")
+                        ) {
+                            val mapped = trackPoints.map { pt ->
+                                val (px, py) = MapProjection.project(pt.lat, pt.lng, viewport, size.width, size.height)
+                                Offset(px, py)
+                            }
+                            if (mapped.size >= 2) {
+                                val path = Path().apply {
+                                    moveTo(mapped.first().x, mapped.first().y)
+                                    for (i in 1 until mapped.size) {
+                                        lineTo(mapped[i].x, mapped[i].y)
+                                    }
+                                }
+                                drawPath(
+                                    path,
+                                    Color.Black.copy(alpha = if (darkTheme) 0.45f else 0.25f),
+                                    style = Stroke(width = 12f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                                )
+                                drawPath(
+                                    path,
+                                    VeloOrange.copy(alpha = 0.28f),
+                                    style = Stroke(width = 16f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                                )
+                                drawPath(
+                                    path,
+                                    VeloOrange,
+                                    style = Stroke(width = 6f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                                )
+                            }
+                            mapped.forEachIndexed { index, pt ->
+                                val color = when {
+                                    index == 0 -> EmeraldPeak
+                                    index == mapped.lastIndex -> Color(0xFFEF4444)
+                                    else -> SignalCyan
+                                }
+                                drawCircle(color, radius = 10f, center = pt)
+                                drawCircle(Color.White, radius = 4f, center = pt)
+                            }
                         }
-                        if (canvasOffsets.size >= 2) {
-                            val path = Path().apply {
-                                moveTo(canvasOffsets.first().x, canvasOffsets.first().y)
-                                for (i in 1 until canvasOffsets.size) {
-                                    lineTo(canvasOffsets[i].x, canvasOffsets[i].y)
+
+                        Surface(
+                            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier
+                                .align(Alignment.TopStart)
+                                .padding(8.dp)
+                        ) {
+                            Text(
+                                text = "Zoom $zoomLevel",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(8.dp)
+                        ) {
+                            Surface(
+                                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.88f),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                IconButton(
+                                    onClick = { zoomLevel = (zoomLevel - 1).coerceAtLeast(11) },
+                                    enabled = zoomLevel > 11,
+                                    modifier = Modifier.testTag("route_builder_zoom_out_btn")
+                                ) {
+                                    Icon(Icons.Rounded.Remove, contentDescription = "Zoom out map")
                                 }
                             }
-                            drawPath(
-                                path,
-                                VeloOrange.copy(alpha = 0.25f),
-                                style = Stroke(width = 16f, cap = StrokeCap.Round, join = StrokeJoin.Round)
-                            )
-                            drawPath(
-                                path,
-                                VeloOrange,
-                                style = Stroke(width = 6f, cap = StrokeCap.Round, join = StrokeJoin.Round)
-                            )
-                        }
-                        canvasOffsets.forEachIndexed { index, pt ->
-                            val color = when {
-                                index == 0 -> EmeraldPeak
-                                index == canvasOffsets.lastIndex -> Color(0xFFEF4444)
-                                else -> SignalCyan
+                            Surface(
+                                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.88f),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                IconButton(
+                                    onClick = { zoomLevel = (zoomLevel + 1).coerceAtMost(17) },
+                                    enabled = zoomLevel < 17,
+                                    modifier = Modifier.testTag("route_builder_zoom_in_btn")
+                                ) {
+                                    Icon(Icons.Rounded.Add, contentDescription = "Zoom in map")
+                                }
                             }
-                            drawCircle(color, radius = 10f, center = pt)
-                            drawCircle(Color.White, radius = 4f, center = pt)
                         }
+
+                        MapAttributionBadge(
+                            darkTheme = darkTheme,
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(8.dp)
+                        )
                     }
 
                     Spacer(Modifier.height(12.dp))
@@ -844,7 +948,6 @@ private fun InteractiveRouteBuilder(
                                 totalDistanceMeters,
                                 totalElevationGain
                             )
-                            canvasOffsets.clear()
                             trackPoints.clear()
                             routeName = ""
                         },
@@ -869,7 +972,6 @@ private fun PersonalHeatmapView(workouts: List<WorkoutActivity>) {
     }
     val allPoints = remember(allTracks) { allTracks.flatten() }
     val totalKm = workouts.sumOf { it.distanceMeters } / 1000.0
-    val gridColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -895,53 +997,12 @@ private fun PersonalHeatmapView(workouts: List<WorkoutActivity>) {
                     )
                     Spacer(Modifier.height(12.dp))
 
-                    Canvas(
+                    MultiTrackMapCanvas(
+                        tracks = allTracks,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(270.dp)
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(Color(0xFF0A0D12))
-                    ) {
-                        for (c in 1..6) {
-                            val x = size.width * (c / 7f)
-                            drawLine(gridColor, Offset(x, 0f), Offset(x, size.height), 1f)
-                        }
-                        for (r in 1..4) {
-                            val y = size.height * (r / 5f)
-                            drawLine(gridColor, Offset(0f, y), Offset(size.width, y), 1f)
-                        }
-
-                        if (allPoints.size >= 2) {
-                            val minLat = allPoints.minOf { it.lat }
-                            val maxLat = allPoints.maxOf { it.lat }
-                            val minLng = allPoints.minOf { it.lng }
-                            val maxLng = allPoints.maxOf { it.lng }
-                            val latSpan = (maxLat - minLat).coerceAtLeast(0.001)
-                            val lngSpan = (maxLng - minLng).coerceAtLeast(0.001)
-                            val pad = 28f
-                            val drawW = (size.width - pad * 2).coerceAtLeast(10f)
-                            val drawH = (size.height - pad * 2).coerceAtLeast(10f)
-
-                            allTracks.forEach { track ->
-                                val path = Path()
-                                track.forEachIndexed { idx, pt ->
-                                    val x = pad + ((pt.lng - minLng) / lngSpan).toFloat() * drawW
-                                    val y = size.height - pad - ((pt.lat - minLat) / latSpan).toFloat() * drawH
-                                    if (idx == 0) path.moveTo(x, y) else path.lineTo(x, y)
-                                }
-                                drawPath(
-                                    path,
-                                    VeloOrange.copy(alpha = 0.22f),
-                                    style = Stroke(width = 16f, cap = StrokeCap.Round, join = StrokeJoin.Round)
-                                )
-                                drawPath(
-                                    path,
-                                    Color(0xFFFFB703).copy(alpha = 0.72f),
-                                    style = Stroke(width = 4.5f, cap = StrokeCap.Round, join = StrokeJoin.Round)
-                                )
-                            }
-                        }
-                    }
+                            .height(280.dp)
+                    )
 
                     Spacer(Modifier.height(12.dp))
                     Row(

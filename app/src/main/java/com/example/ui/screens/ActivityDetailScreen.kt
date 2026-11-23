@@ -20,6 +20,7 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.FileDownload
+import androidx.compose.material.icons.rounded.PlayCircle
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Terrain
 import androidx.compose.material3.Button
@@ -41,6 +42,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -49,11 +51,14 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.core.ActivityShareHelper
 import com.example.core.Formatters
 import com.example.core.GpxSerializer
+import com.example.core.ShareCardConfig
 import com.example.data.model.UiState
 import com.example.ui.MainViewModel
 import com.example.ui.components.ElevationAndHrChart
+import com.example.ui.components.FlyoverMapDialog
 import com.example.ui.components.HrZonesBarChart
 import com.example.ui.components.MetricCell
 import com.example.ui.components.RoutePolylineCanvas
@@ -63,6 +68,7 @@ import com.example.ui.theme.CrimsonPulse
 import com.example.ui.theme.JetBrainsMonoFontFamily
 import com.example.ui.theme.SignalCyan
 import com.example.ui.theme.VeloOrange
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -79,8 +85,10 @@ fun ActivityDetailScreen(
     }
 
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val workout = (workoutsState as? UiState.Success)?.data?.firstOrNull { it.id == workoutId }
     var showShareDialog by remember { mutableStateOf(false) }
+    var showFlyoverDialog by remember { mutableStateOf(false) }
 
     val exportGpxLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/gpx+xml")
@@ -175,8 +183,22 @@ fun ActivityDetailScreen(
                             points = workout.decodedPoints,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(200.dp)
+                                .height(260.dp)
                         )
+                        if (workout.decodedPoints.size >= 2) {
+                            Spacer(Modifier.height(10.dp))
+                            OutlinedButton(
+                                onClick = { showFlyoverDialog = true },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(48.dp)
+                                    .testTag("detail_flyover_btn")
+                            ) {
+                                Icon(Icons.Rounded.PlayCircle, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text("Play 3D Flyover Map Animator")
+                            }
+                        }
                         Spacer(Modifier.height(14.dp))
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -371,6 +393,25 @@ fun ActivityDetailScreen(
                 exportGpxLauncher.launch(GpxSerializer.suggestedGpxFileName(workout.title))
             },
             onDismiss = { showShareDialog = false }
+        )
+    }
+
+    if (showFlyoverDialog && workout != null) {
+        FlyoverMapDialog(
+            workout = workout,
+            onShareFrame = { progress ->
+                scope.launch {
+                    val backdrop = ActivityShareHelper.fetchShareCardMapBackdrop(workout, darkMap = true)
+                    ActivityShareHelper.shareAsImageCard(
+                        context = context,
+                        workout = workout,
+                        config = ShareCardConfig(showMap = true),
+                        mapBackdrop = backdrop,
+                        progressFraction = progress
+                    )
+                }
+            },
+            onDismiss = { showFlyoverDialog = false }
         )
     }
 }

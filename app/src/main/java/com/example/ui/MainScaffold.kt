@@ -60,8 +60,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavType
@@ -127,10 +125,6 @@ fun MainScaffold(
         viewModel.events.collect { msg ->
             snackbarHostState.showSnackbar(msg)
         }
-    }
-
-    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
-        viewModel.autoSyncBandWorkoutsIfPermitted()
     }
 
     val tabs = remember {

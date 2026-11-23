@@ -155,10 +155,18 @@ class LiveVoiceCoachManager(
                 throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Gemini Live API voice session failed", e)
+                val raw = e.localizedMessage ?: "Failed to start Live voice session."
+                val display = if (
+                    raw.contains("App Check", ignoreCase = true) ||
+                    raw.contains("403") ||
+                    raw.contains("closed by the server", ignoreCase = true)
+                ) {
+                    "$raw\n\nTip: Untuk APK hasil build GitHub, buat Debug Token di Firebase Console (App Check -> Manage debug tokens -> Add debug token) lalu masukkan ke GitHub Secret FIREBASE_APPCHECK_DEBUG_TOKEN dan build ulang."
+                } else raw
                 _state.update {
                     it.copy(
                         status = VoiceCoachStatus.ERROR,
-                        statusMessage = e.localizedMessage ?: "Failed to start Live voice session."
+                        statusMessage = display
                     )
                 }
                 stopConversationInternal(updateStatus = false)

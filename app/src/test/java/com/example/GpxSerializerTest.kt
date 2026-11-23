@@ -77,4 +77,45 @@ class GpxSerializerTest {
         assertEquals(SportType.GRAVEL_RIDE, parsed.sportType)
         assertEquals(100, parsed.points.size)
     }
+
+    @Test
+    fun `parseGpxStream preserves historical workout time with offsets, microseconds, and metadata fallback`() {
+        val gpxWithOffsetsAndMicros = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <gpx version="1.1" creator="StravaGPX">
+              <metadata><time>2025-05-10T06:00:00Z</time></metadata>
+              <trk>
+                <name>Sunday Morning Loop</name>
+                <type>running</type>
+                <trkseg>
+                  <trkpt lat="-6.2185" lon="106.8020"><ele>15.0</ele><time>2025-05-10T06:05:12.123456+07:00</time></trkpt>
+                  <trkpt lat="-6.2195" lon="106.8030"><ele>17.0</ele><time>2025-05-10T06:15:12.123456+07:00</time></trkpt>
+                </trkseg>
+              </trk>
+            </gpx>
+        """.trimIndent()
+
+        val parsed = GpxSerializer.parseGpxStream(gpxWithOffsetsAndMicros.byteInputStream())
+        // 2025-05-10T06:05:12+07:00 == 2025-05-09T23:05:12.123Z
+        val expectedStart = GpxSerializer.parseIsoTimestampMs("2025-05-09T23:05:12.123Z")
+        assertNotNull(expectedStart)
+        assertEquals(expectedStart, parsed.startTimeMs)
+        assertEquals(600_000L, parsed.endTimeMs!! - parsed.startTimeMs!!)
+
+        val gpxMetadataTimeOnly = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <gpx version="1.1" creator="BandExport">
+              <metadata><time>2025-03-15T01:30:00Z</time></metadata>
+              <trk>
+                <name>Band Walk</name>
+                <trkseg>
+                  <trkpt lat="-6.21" lon="106.80"><ele>10.0</ele></trkpt>
+                  <trkpt lat="-6.22" lon="106.81"><ele>12.0</ele></trkpt>
+                </trkseg>
+              </trk>
+            </gpx>
+        """.trimIndent()
+        val parsedMeta = GpxSerializer.parseGpxStream(gpxMetadataTimeOnly.byteInputStream())
+        assertEquals(GpxSerializer.parseIsoTimestampMs("2025-03-15T01:30:00Z"), parsedMeta.startTimeMs)
+    }
 }
