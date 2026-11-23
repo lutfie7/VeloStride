@@ -267,10 +267,18 @@ fun ActivityDetailScreen(
                             }
                             Button(
                                 onClick = { viewModel.generateWorkoutAiInsight(workout) },
+                                enabled = insightState !is UiState.Loading,
                                 colors = ButtonDefaults.buttonColors(containerColor = SignalCyan, contentColor = MaterialTheme.colorScheme.onSecondary),
                                 modifier = Modifier.testTag("generate_workout_insight_btn")
                             ) {
-                                Text(if (workout.aiInsight.isNullOrBlank()) "Analyze" else "Refresh")
+                                Text(
+                                    when {
+                                        insightState is UiState.Loading -> "Analyzing..."
+                                        insightState is UiState.Error -> "Retry"
+                                        workout.aiInsight.isNullOrBlank() -> "Analyze"
+                                        else -> "Refresh"
+                                    }
+                                )
                             }
                         }
                         Spacer(Modifier.height(10.dp))

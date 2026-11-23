@@ -559,10 +559,14 @@ class MainViewModel(
 
     private fun formatAiErrorMessage(e: Exception, fallback: String): String {
         val raw = e.localizedMessage ?: fallback
-        return if (raw.contains("App Check", ignoreCase = true) || raw.contains("403")) {
-            "$raw\n\nTip: Untuk APK hasil build GitHub, buat Debug Token di Firebase Console (App Check -> Manage debug tokens -> Add debug token) lalu masukkan UUID token ke GitHub Secret FIREBASE_APPCHECK_DEBUG_TOKEN dan build ulang."
-        } else {
-            raw
+        return when {
+            raw.contains("App Check", ignoreCase = true) || raw.contains("403") -> {
+                "$raw\n\nTip: Untuk APK hasil build GitHub, buat Debug Token di Firebase Console (App Check -> Manage debug tokens -> Add debug token) lalu masukkan UUID token ke GitHub Secret FIREBASE_APPCHECK_DEBUG_TOKEN dan build ulang."
+            }
+            AthleteIntelligenceRepository.isTransientDemandError(e) -> {
+                "Server AI sedang mengalami lonjakan trafik sementara (sudah mencoba retry & model cadangan). Tunggu beberapa detik lalu ketuk Analyze lagi.\n\nDetail: $raw"
+            }
+            else -> raw
         }
     }
 
