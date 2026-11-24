@@ -5,18 +5,14 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.Explore
@@ -25,9 +21,8 @@ import androidx.compose.material.icons.rounded.Insights
 import androidx.compose.material.icons.rounded.LightMode
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.RadioButtonChecked
+import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Watch
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -37,12 +32,10 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -50,15 +43,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -70,11 +59,14 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import coil.compose.AsyncImage
-import com.example.R
+import com.example.core.AppLanguage
+import com.example.core.UnitSystem
+import com.example.core.rememberAppStrings
 import com.example.data.model.AthleteProfile
 import com.example.data.model.SportType
 import com.example.data.model.UiState
-import com.example.ui.components.SportSelectorGrid
+import com.example.ui.components.AthleteProfileDialog
+import com.example.ui.components.SettingsDialog
 import com.example.ui.components.VeloStrideWordmark
 import com.example.ui.screens.ActivityDetailScreen
 import com.example.ui.screens.FeedScreen
@@ -97,7 +89,7 @@ object VeloRoutes {
 
 private data class NavTabItem(
     val route: String,
-    val labelRes: Int,
+    val labelSelector: (com.example.core.AppStrings) -> String,
     val icon: ImageVector,
     val testTag: String,
 )
@@ -106,14 +98,20 @@ private data class NavTabItem(
 @Composable
 fun MainScaffold(
     viewModel: MainViewModel,
+    userEmail: String = "",
     isDarkTheme: Boolean,
+    selectedLanguage: AppLanguage = AppLanguage.ENGLISH_US,
+    selectedUnitSystem: UnitSystem = UnitSystem.METRIC,
     onToggleTheme: () -> Unit,
+    onSelectLanguage: (AppLanguage) -> Unit = {},
+    onSelectUnitSystem: (UnitSystem) -> Unit = {},
     onSignOut: () -> Unit,
 ) {
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
     val snackbarHostState = remember { SnackbarHostState() }
+    val strings = rememberAppStrings()
 
     val profileState by viewModel.profileState.collectAsStateWithLifecycle()
     val gearState by viewModel.gearState.collectAsStateWithLifecycle()
@@ -122,6 +120,7 @@ fun MainScaffold(
 
     var showManualDialog by remember { mutableStateOf(false) }
     var showProfileDialog by remember { mutableStateOf(false) }
+    var showSettingsDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(viewModel) {
         viewModel.events.collect { msg ->
@@ -131,11 +130,11 @@ fun MainScaffold(
 
     val tabs = remember {
         listOf(
-            NavTabItem(VeloRoutes.FEED, R.string.nav_feed, Icons.Rounded.Home, "nav_tab_feed"),
-            NavTabItem(VeloRoutes.MAPS, R.string.nav_maps, Icons.Rounded.Explore, "nav_tab_maps"),
-            NavTabItem(VeloRoutes.RECORD, R.string.nav_record, Icons.Rounded.RadioButtonChecked, "nav_tab_record"),
-            NavTabItem(VeloRoutes.PROGRESS, R.string.nav_progress, Icons.Rounded.Insights, "nav_tab_progress"),
-            NavTabItem(VeloRoutes.DEVICES, R.string.nav_devices, Icons.Rounded.Watch, "nav_tab_devices")
+            NavTabItem(VeloRoutes.FEED, { it.navFeed }, Icons.Rounded.Home, "nav_tab_feed"),
+            NavTabItem(VeloRoutes.MAPS, { it.navMaps }, Icons.Rounded.Explore, "nav_tab_maps"),
+            NavTabItem(VeloRoutes.RECORD, { it.navRecord }, Icons.Rounded.RadioButtonChecked, "nav_tab_record"),
+            NavTabItem(VeloRoutes.PROGRESS, { it.navProgress }, Icons.Rounded.Insights, "nav_tab_progress"),
+            NavTabItem(VeloRoutes.DEVICES, { it.navDevices }, Icons.Rounded.Watch, "nav_tab_devices")
         )
     }
 
@@ -173,7 +172,7 @@ fun MainScaffold(
                             ) {
                                 Icon(
                                     imageVector = if (isDarkTheme) Icons.Rounded.LightMode else Icons.Rounded.DarkMode,
-                                    contentDescription = "Toggle theme"
+                                    contentDescription = strings.toggleThemeTooltip
                                 )
                             }
                             IconButton(
@@ -183,23 +182,23 @@ fun MainScaffold(
                                 if (profile.photoUrl.isNotBlank()) {
                                     AsyncImage(
                                         model = profile.photoUrl,
-                                        contentDescription = "Athlete profile",
+                                        contentDescription = strings.profileTooltip,
                                         contentScale = ContentScale.Crop,
                                         modifier = Modifier
                                             .size(28.dp)
                                             .clip(CircleShape)
                                     )
                                 } else {
-                                    Icon(Icons.Rounded.Person, contentDescription = "Athlete settings")
+                                    Icon(Icons.Rounded.Person, contentDescription = strings.profileTooltip)
                                 }
                             }
                             IconButton(
-                                onClick = onSignOut,
-                                modifier = Modifier.testTag("sign_out_btn")
+                                onClick = { showSettingsDialog = true },
+                                modifier = Modifier.testTag("open_settings_btn")
                             ) {
                                 Icon(
-                                    imageVector = Icons.AutoMirrored.Rounded.Logout,
-                                    contentDescription = stringResource(R.string.sign_out)
+                                    imageVector = Icons.Rounded.Settings,
+                                    contentDescription = strings.settingsTooltip
                                 )
                             }
                         }
@@ -214,7 +213,7 @@ fun MainScaffold(
                         contentColor = MaterialTheme.colorScheme.onPrimary,
                         modifier = Modifier.testTag("fab_log_manual_workout")
                     ) {
-                        Icon(Icons.Rounded.Add, contentDescription = "Log activity manually")
+                        Icon(Icons.Rounded.Add, contentDescription = strings.manualEntryBtn)
                     }
                 }
             },
@@ -222,7 +221,7 @@ fun MainScaffold(
                 if (!useRail && !isDetailScreen) {
                     NavigationBar {
                         tabs.forEach { tab ->
-                            val label = stringResource(tab.labelRes)
+                            val label = tab.labelSelector(strings)
                             NavigationBarItem(
                                 selected = currentRoute == tab.route,
                                 onClick = { navigateToTab(tab.route) },
@@ -243,7 +242,7 @@ fun MainScaffold(
                 if (useRail && !isDetailScreen) {
                     NavigationRail(modifier = Modifier.fillMaxHeight()) {
                         tabs.forEach { tab ->
-                            val label = stringResource(tab.labelRes)
+                            val label = tab.labelSelector(strings)
                             NavigationRailItem(
                                 selected = currentRoute == tab.route,
                                 onClick = { navigateToTab(tab.route) },
@@ -329,104 +328,42 @@ fun MainScaffold(
         )
     }
 
+    if (showSettingsDialog) {
+        SettingsDialog(
+            profile = profile,
+            userEmail = userEmail,
+            isDarkTheme = isDarkTheme,
+            selectedLanguage = selectedLanguage,
+            selectedUnitSystem = selectedUnitSystem,
+            onToggleTheme = onToggleTheme,
+            onSelectLanguage = onSelectLanguage,
+            onSelectUnitSystem = onSelectUnitSystem,
+            onOpenProfileTargets = { showProfileDialog = true },
+            onSignOut = onSignOut,
+            onDismiss = { showSettingsDialog = false }
+        )
+    }
+
     if (showProfileDialog) {
         AthleteProfileDialog(
             profile = profile,
             onDismiss = { showProfileDialog = false },
-            onSave = { name, goalKm, maxHr, restHr, ftp, sport ->
+            onSave = { payload ->
                 showProfileDialog = false
-                viewModel.updateProfileTargets(name, goalKm, maxHr, restHr, ftp, sport)
+                viewModel.updateProfileTargets(
+                    displayName = payload.displayName,
+                    photoUrl = payload.photoUrl,
+                    birthDateIso = payload.birthDateIso,
+                    gender = payload.gender,
+                    heightCm = payload.heightCm,
+                    weightKg = payload.weightKg,
+                    weeklyGoalKm = payload.weeklyGoalKm,
+                    maxHr = payload.maxHr,
+                    restingHr = payload.restingHr,
+                    ftpWatts = payload.ftpWatts,
+                    preferredSport = payload.preferredSport
+                )
             }
         )
     }
-}
-
-@Composable
-private fun AthleteProfileDialog(
-    profile: AthleteProfile,
-    onDismiss: () -> Unit,
-    onSave: (String, Double, Int, Int, Int, SportType) -> Unit,
-) {
-    var name by remember(profile) { mutableStateOf(profile.displayName) }
-    var goalKm by remember(profile) { mutableStateOf(profile.weeklyDistanceGoalKm.toInt().toString()) }
-    var maxHr by remember(profile) { mutableStateOf(profile.maxHr.toString()) }
-    var restHr by remember(profile) { mutableStateOf(profile.restingHr.toString()) }
-    var ftp by remember(profile) { mutableStateOf(profile.ftpWatts.toString()) }
-    var preferredSport by remember(profile) { mutableStateOf(SportType.fromRaw(profile.preferredSport)) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Athlete Thresholds & Goals") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    label = { Text("Display Name") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = goalKm,
-                        onValueChange = { goalKm = it },
-                        label = { Text("Weekly Goal (km)") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        singleLine = true,
-                        modifier = Modifier.weight(1f)
-                    )
-                    OutlinedTextField(
-                        value = ftp,
-                        onValueChange = { ftp = it },
-                        label = { Text("FTP (Watts)") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        singleLine = true,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = maxHr,
-                        onValueChange = { maxHr = it },
-                        label = { Text("Max HR (bpm)") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        singleLine = true,
-                        modifier = Modifier.weight(1f)
-                    )
-                    OutlinedTextField(
-                        value = restHr,
-                        onValueChange = { restHr = it },
-                        label = { Text("Rest HR (bpm)") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        singleLine = true,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-                SportSelectorGrid(
-                    selectedSport = preferredSport,
-                    onSelect = { preferredSport = it }
-                )
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    onSave(
-                        name.ifBlank { "Athlete" },
-                        goalKm.toDoubleOrNull() ?: 40.0,
-                        maxHr.toIntOrNull() ?: 192,
-                        restHr.toIntOrNull() ?: 54,
-                        ftp.toIntOrNull() ?: 230,
-                        preferredSport
-                    )
-                },
-                modifier = Modifier.testTag("save_profile_targets_btn")
-            ) {
-                Text("Save")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
-        }
-    )
 }

@@ -58,6 +58,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.core.Formatters
 import com.example.core.GpxSerializer
+import com.example.core.LocalUnitSystem
+import com.example.core.rememberAppStrings
 import com.example.data.model.AthleteProfile
 import com.example.data.model.BleConnectionStatus
 import com.example.data.model.SportType
@@ -97,6 +99,8 @@ fun FeedScreen(
     val isRefreshing by viewModel.isRefreshing.collectAsStateWithLifecycle()
 
     val context = LocalContext.current
+    val unitSystem = LocalUnitSystem.current
+    val strings = rememberAppStrings()
     var selectedFilter by remember { mutableStateOf<SportType?>(null) }
     var sortOrder by remember { mutableStateOf(WorkoutSortOrder.NEWEST) }
     var workoutToShare by remember { mutableStateOf<WorkoutActivity?>(null) }
@@ -150,10 +154,13 @@ fun FeedScreen(
             val weekWorkouts = workouts.filter {
                 (it.createdAt?.toDate()?.time ?: System.currentTimeMillis()) >= sevenDaysAgo
             }
-            val weekKm = weekWorkouts.sumOf { it.distanceMeters } / 1000.0
+            val weekMeters = weekWorkouts.sumOf { it.distanceMeters }
+            val weekDisplay = Formatters.metersToDisplayDistance(weekMeters, unitSystem)
             val weekMoving = weekWorkouts.sumOf { it.movingTimeSeconds }
             val goalKm = profile.weeklyDistanceGoalKm.coerceAtLeast(1.0)
-            val goalPct = (weekKm / goalKm).toFloat().coerceIn(0f, 1f)
+            val goalDisplay = Formatters.kmToDisplayDistance(goalKm, unitSystem).coerceAtLeast(1.0)
+            val unitLabel = Formatters.distanceUnitLabel(unitSystem)
+            val goalPct = (weekDisplay / goalDisplay).toFloat().coerceIn(0f, 1f)
 
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -168,13 +175,13 @@ fun FeedScreen(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "WEEKLY SNAPSHOT",
+                                text = strings.weeklyVolumeTitle,
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.primary
                             )
                             Spacer(Modifier.height(4.dp))
                             Text(
-                                text = "${String.format("%.1f", weekKm)} / ${goalKm.toInt()} km",
+                                text = "${String.format("%.1f", weekDisplay)} / ${goalDisplay.toInt()} $unitLabel",
                                 style = MaterialTheme.typography.headlineMedium,
                                 fontFamily = JetBrainsMonoFontFamily,
                                 fontWeight = FontWeight.Bold

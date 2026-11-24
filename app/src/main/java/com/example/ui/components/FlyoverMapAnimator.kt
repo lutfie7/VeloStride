@@ -138,7 +138,7 @@ fun FlyoverMapAnimator(
     val darkTheme = MaterialTheme.colorScheme.surface.luminance() < 0.5f
     val density = LocalDensity.current
 
-    var internalRatio by remember { mutableStateOf(ShareCardRatio.SQUARE_1_1) }
+    var internalRatio by remember { mutableStateOf(ShareCardRatio.PORTRAIT_9_16) }
     val activeRatio = selectedRatio ?: internalRatio
     fun updateRatio(next: ShareCardRatio) {
         internalRatio = next
@@ -854,10 +854,12 @@ fun FlyoverMapAnimator(
                             modifier = Modifier.padding(horizontal = if (compactHud) 8.dp else 11.dp, vertical = 6.dp)
                         ) {
                             if (displayConfig.showDistance) {
+                                val distVal = Formatters.metersToDisplayDistance(coveredKm * 1000.0)
+                                val distUnit = Formatters.distanceUnitLabel()
                                 Column {
                                     Text("DIST", fontSize = 8.sp, color = Color(0xFF94A3B8), fontWeight = FontWeight.Bold)
                                     Text(
-                                        text = String.format("%.2f", coveredKm) + if (compactHud) "" else " km",
+                                        text = String.format("%.2f", distVal) + if (compactHud) "" else " $distUnit",
                                         fontFamily = JetBrainsMonoFontFamily,
                                         fontWeight = FontWeight.Bold,
                                         fontSize = if (compactHud) 11.sp else 13.sp,
@@ -881,7 +883,7 @@ fun FlyoverMapAnimator(
                                 Column {
                                     Text("ELEV", fontSize = 8.sp, color = Color(0xFF94A3B8), fontWeight = FontWeight.Bold)
                                     Text(
-                                        text = "${currentSample.ele.roundToInt()}m",
+                                        text = Formatters.formatElevation(currentSample.ele),
                                         fontFamily = JetBrainsMonoFontFamily,
                                         fontWeight = FontWeight.Bold,
                                         fontSize = if (compactHud) 11.sp else 13.sp,
@@ -901,7 +903,12 @@ fun FlyoverMapAnimator(
                                         text = if (workout.parsedSport.isPaceBased) {
                                             Formatters.formatPaceShort(workout.avgPaceSecPerKm)
                                         } else {
-                                            String.format("%.1f", workout.avgSpeedKmh)
+                                            val spd = if (Formatters.unitSystem == com.example.core.UnitSystem.IMPERIAL) {
+                                                workout.avgSpeedKmh / Formatters.KM_PER_MILE
+                                            } else {
+                                                workout.avgSpeedKmh
+                                            }
+                                            String.format("%.1f", spd)
                                         },
                                         fontFamily = JetBrainsMonoFontFamily,
                                         fontWeight = FontWeight.Bold,

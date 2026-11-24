@@ -51,6 +51,10 @@ data class AthleteProfile(
     val userId: String = "",
     val displayName: String = "Athlete",
     val photoUrl: String = "",
+    val birthDateIso: String = "",
+    val gender: String = "",
+    val heightCm: Double = 0.0,
+    val weightKg: Double = 0.0,
     val weeklyDistanceGoalKm: Double = 40.0,
     val maxHr: Int = 192,
     val restingHr: Int = 54,
@@ -60,7 +64,47 @@ data class AthleteProfile(
     val preferredSport: String = SportType.RUN.name,
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null,
-)
+) {
+    fun ageYears(referenceTimeMs: Long = System.currentTimeMillis()): Int? {
+        val parts = birthDateIso.trim().split("-")
+        if (parts.size != 3) return null
+        val year = parts[0].toIntOrNull() ?: return null
+        val month = parts[1].toIntOrNull() ?: return null
+        val day = parts[2].toIntOrNull() ?: return null
+        if (year !in 1920..2025 || month !in 1..12 || day !in 1..31) return null
+
+        val nowCal = java.util.Calendar.getInstance().apply { timeInMillis = referenceTimeMs }
+        var age = nowCal.get(java.util.Calendar.YEAR) - year
+        val currentMonth = nowCal.get(java.util.Calendar.MONTH) + 1
+        val currentDay = nowCal.get(java.util.Calendar.DAY_OF_MONTH)
+        if (currentMonth < month || (currentMonth == month && currentDay < day)) {
+            age--
+        }
+        return age.takeIf { it in 5..110 }
+    }
+
+    fun bmi(): Double? {
+        if (heightCm !in 80.0..280.0 || weightKg !in 20.0..400.0) return null
+        val heightM = heightCm / 100.0
+        val raw = weightKg / (heightM * heightM)
+        return kotlin.math.round(raw * 10.0) / 10.0
+    }
+
+    fun bmiCategory(): String? = bmi()?.let { value ->
+        when {
+            value < 18.5 -> "Underweight"
+            value < 25.0 -> "Optimal"
+            value < 30.0 -> "Overweight"
+            else -> "High"
+        }
+    }
+
+    fun estimatedMaxHrByAge(): Int? =
+        ageYears()?.let { age -> kotlin.math.round(208.0 - 0.7 * age).toInt().coerceIn(130, 225) }
+
+    fun hasBiometrics(): Boolean =
+        ageYears() != null || gender.isNotBlank() || heightCm > 0.0 || weightKg > 0.0
+}
 
 @Keep
 @IgnoreExtraProperties
@@ -326,6 +370,12 @@ data class PerformanceAnalytics(
     val vo2Max: Double,
     val vo2MaxTrendDelta: Double,
     val vo2MaxClassification: String,
+    val raiScore: Int = 0,
+    val raiClassification: String = "Building",
+    val raiAerobicComponent: Int = 0,
+    val raiLoadComponent: Int = 0,
+    val raiRecoveryComponent: Int = 0,
+    val raiProfileCalibrated: Boolean = false,
     val fitnessCtl: Double,
     val fatigueAtl: Double,
     val formTsb: Double,

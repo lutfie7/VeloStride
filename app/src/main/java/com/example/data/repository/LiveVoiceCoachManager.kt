@@ -106,12 +106,19 @@ class LiveVoiceCoachManager(
                     },
                     systemInstruction = content {
                         text(
-                            "You are VeloStride Live Voice Coach, a concise, motivating endurance coach speaking in real time. " +
-                                "Reply naturally in the user's language (English or Indonesian). " +
-                                "Athlete: ${profile.displayName}, Primary Sport: ${profile.preferredSport}, Weekly Goal: ${profile.weeklyDistanceGoalKm} km. " +
-                                "Telemetry: VO2 Max ${analytics.vo2Max}, CTL ${analytics.fitnessCtl}, ATL ${analytics.fatigueAtl}, " +
-                                "TSB ${analytics.formTsb}, Recovery ${analytics.recoveryScore}% (${analytics.recoveryStatusLabel}), " +
-                                "HRV ${analytics.hrvRmssdMs} ms. Recent sessions: $workoutDigest."
+                            buildString {
+                                append("You are VeloStride Live Voice Coach, a concise, motivating endurance coach speaking in real time. ")
+                                append("Reply naturally in the user's language (English or Indonesian). ")
+                                append("Athlete: ${profile.displayName}, Primary Sport: ${profile.preferredSport}, Weekly Goal: ${profile.weeklyDistanceGoalKm} km. ")
+                                profile.ageYears()?.let { append("Age: $it. ") }
+                                if (profile.gender.isNotBlank()) append("Gender: ${profile.gender}. ")
+                                if (profile.heightCm > 0.0) append("Height: ${profile.heightCm.toInt()} cm. ")
+                                if (profile.weightKg > 0.0) append("Weight: ${profile.weightKg} kg. ")
+                                append("Telemetry: RAI ${analytics.raiScore}/100 (${analytics.raiClassification}), ")
+                                append("VO2 Max ${analytics.vo2Max}, CTL ${analytics.fitnessCtl}, ATL ${analytics.fatigueAtl}, ")
+                                append("TSB ${analytics.formTsb}, Recovery ${analytics.recoveryScore}% (${analytics.recoveryStatusLabel}), ")
+                                append("HRV ${analytics.hrvRmssdMs} ms. Recent sessions: $workoutDigest.")
+                            }
                         )
                     }
                 )

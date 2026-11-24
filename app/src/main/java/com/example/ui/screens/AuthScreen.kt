@@ -58,6 +58,7 @@ import androidx.credentials.CredentialManager
 import com.example.R
 import com.example.core.attemptAutoSignIn
 import com.example.core.onGoogleSignInClicked
+import com.example.core.rememberAppStrings
 import com.example.ui.components.VeloStrideWordmark
 import com.example.ui.theme.ObsidianBg
 import com.example.ui.theme.SignalCyan
@@ -69,6 +70,7 @@ fun AuthScreen(
     initialErrorMessage: String? = null,
 ) {
     val context = LocalContext.current
+    val strings = rememberAppStrings()
     val scope = rememberCoroutineScope()
     val credentialManager = remember(context) { CredentialManager.create(context) }
     var isLoading by remember { mutableStateOf(false) }
@@ -241,7 +243,7 @@ fun AuthScreen(
                         )
                     } else {
                         Text(
-                            text = stringResource(R.string.sign_in_google),
+                            text = strings.signInGoogle,
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold
                         )

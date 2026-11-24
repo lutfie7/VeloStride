@@ -615,6 +615,12 @@ class MainViewModel(
             raw.contains("App Check", ignoreCase = true) || raw.contains("403") -> {
                 "$raw\n\nTip: Untuk APK hasil build GitHub, buat Debug Token di Firebase Console (App Check -> Manage debug tokens -> Add debug token) lalu masukkan UUID token ke GitHub Secret FIREBASE_APPCHECK_DEBUG_TOKEN dan build ulang."
             }
+            AthleteIntelligenceRepository.isQuotaExceededError(e) -> {
+                "Kuota permintaan AI sementara tercapai (sudah mencoba fallback ke gemini-3.5-flash-lite). Tunggu beberapa menit lalu ketuk Analyze lagi.\n\nDetail: $raw"
+            }
+            AthleteIntelligenceRepository.isTimeoutError(e) -> {
+                "Koneksi ke server AI timeout setelah mencoba model utama & cadangan. Periksa koneksi internet Anda lalu coba lagi."
+            }
             AthleteIntelligenceRepository.isTransientDemandError(e) -> {
                 "Server AI sedang mengalami lonjakan trafik sementara (sudah mencoba retry & model cadangan). Tunggu beberapa detik lalu ketuk Analyze lagi.\n\nDetail: $raw"
             }
@@ -972,6 +978,11 @@ class MainViewModel(
 
     fun updateProfileTargets(
         displayName: String,
+        photoUrl: String,
+        birthDateIso: String,
+        gender: String,
+        heightCm: Double,
+        weightKg: Double,
         weeklyGoalKm: Double,
         maxHr: Int,
         restingHr: Int,
@@ -980,14 +991,23 @@ class MainViewModel(
     ) {
         viewModelScope.launch {
             repository.updateProfileTargets(
-                currentUserId,
-                displayName,
-                weeklyGoalKm,
-                maxHr,
-                restingHr,
-                ftpWatts,
-                preferredSport
-            ).onSuccess { _events.emit("Athlete thresholds updated") }
+                userId = currentUserId,
+                displayName = displayName,
+                photoUrl = photoUrl,
+                birthDateIso = birthDateIso,
+                gender = gender,
+                heightCm = heightCm,
+                weightKg = weightKg,
+                weeklyGoalKm = weeklyGoalKm,
+                maxHr = maxHr,
+                restingHr = restingHr,
+                ftpWatts = ftpWatts,
+                preferredSport = preferredSport
+            ).onSuccess {
+                _events.emit("Athlete profile & biometrics updated")
+            }.onFailure { err ->
+                _events.emit("Failed to update profile: ${err.localizedMessage}")
+            }
         }
     }
 

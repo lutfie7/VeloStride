@@ -72,6 +72,9 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.core.Formatters
+import com.example.core.LocalUnitSystem
+import com.example.core.rememberAppStrings
+import com.example.data.model.AthleteProfile
 import com.example.data.model.GearCategory
 import com.example.data.model.SportType
 import com.example.data.model.UiState
@@ -95,13 +98,17 @@ import com.example.ui.theme.VioletZone
 @Composable
 fun ProgressScreen(viewModel: MainViewModel) {
     val analytics by viewModel.analyticsState.collectAsStateWithLifecycle()
+    val profileState by viewModel.profileState.collectAsStateWithLifecycle()
     val healthLogsState by viewModel.healthLogsState.collectAsStateWithLifecycle()
     val gearState by viewModel.gearState.collectAsStateWithLifecycle()
     val challengesState by viewModel.challengesState.collectAsStateWithLifecycle()
     val coachState by viewModel.coachResponseState.collectAsStateWithLifecycle()
     val liveVoiceState by viewModel.liveVoiceState.collectAsStateWithLifecycle()
     val isRefreshing by viewModel.isRefreshing.collectAsStateWithLifecycle()
+    val unitSystem = LocalUnitSystem.current
+    val strings = rememberAppStrings()
 
+    val profile = (profileState as? UiState.Success)?.data ?: AthleteProfile()
     val latestHealth = (healthLogsState as? UiState.Success)?.data?.firstOrNull()
     val gearList = (gearState as? UiState.Success)?.data.orEmpty()
     val challenges = (challengesState as? UiState.Success)?.data.orEmpty()
@@ -131,6 +138,127 @@ fun ProgressScreen(viewModel: MainViewModel) {
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
+        // 0. RAI Score (Readiness & Athlete Index) — displayed above VO2 Max
+        item {
+            val raiColor = when {
+                analytics.raiScore >= 80 -> EmeraldPeak
+                analytics.raiScore >= 65 -> VeloOrange
+                analytics.raiScore >= 48 -> SignalCyan
+                else -> AmberZone
+            }
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                shape = RoundedCornerShape(20.dp),
+                modifier = Modifier.testTag("rai_score_card")
+            ) {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.padding(16.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = strings.raiSectionLabel,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = VeloOrange,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = strings.raiSubtitle,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(Modifier.height(6.dp))
+                            Row(verticalAlignment = Alignment.Bottom) {
+                                Text(
+                                    text = "${analytics.raiScore}",
+                                    style = MaterialTheme.typography.displayMedium,
+                                    fontFamily = JetBrainsMonoFontFamily,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    text = "/ 100",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontFamily = JetBrainsMonoFontFamily,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(bottom = 8.dp)
+                                )
+                            }
+                            Surface(
+                                color = raiColor.copy(alpha = 0.16f),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text(
+                                    text = analytics.raiClassification,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = raiColor,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                )
+                            }
+                        }
+                        RecoveryGaugeRing(
+                            score = analytics.raiScore,
+                            label = "RAI",
+                            accentColor = raiColor,
+                            sizeDp = 88.dp
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        MetricCell(
+                            label = strings.raiAerobicLabel,
+                            value = "${analytics.raiAerobicComponent}/100",
+                            valueColor = SignalCyan
+                        )
+                        MetricCell(
+                            label = strings.raiLoadLabel,
+                            value = "${analytics.raiLoadComponent}/100",
+                            valueColor = VeloOrange
+                        )
+                        MetricCell(
+                            label = strings.raiRecoveryLabel,
+                            value = "${analytics.raiRecoveryComponent}/100",
+                            valueColor = EmeraldPeak
+                        )
+                    }
+
+                    val bioChipText = if (analytics.raiProfileCalibrated) {
+                        val details = buildList {
+                            profile.ageYears()?.let { add("${strings.ageLabel} $it") }
+                            if (profile.heightCm > 0.0) add(Formatters.formatHeight(profile.heightCm, unitSystem))
+                            if (profile.weightKg > 0.0) add(Formatters.formatWeight(profile.weightKg, unitSystem))
+                            profile.bmi()?.let { add("${strings.bmiLabel} $it") }
+                        }.joinToString(" • ")
+                        "${strings.raiCalibratedNote}: $details"
+                    } else {
+                        strings.raiUncalibratedHint
+                    }
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = bioChipText,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp)
+                        )
+                    }
+                }
+            }
+        }
+
         // 1. VO2 Max & Cardiovascular Fitness
         item {
             Card(
@@ -144,7 +272,7 @@ fun ProgressScreen(viewModel: MainViewModel) {
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column {
-                            Text("VO2 MAX & AEROBIC POWER", style = MaterialTheme.typography.labelSmall, color = SignalCyan)
+                            Text(strings.vo2MaxSectionLabel, style = MaterialTheme.typography.labelSmall, color = SignalCyan)
                             Row(verticalAlignment = Alignment.Bottom) {
                                 Text(
                                     text = "${analytics.vo2Max}",
@@ -740,7 +868,7 @@ fun ProgressScreen(viewModel: MainViewModel) {
                                     fontWeight = FontWeight.Bold
                                 )
                                 Text(
-                                    text = "${category.label} • ${Formatters.formatDistanceKm(gear.distanceMeters)} / ${Formatters.formatDistanceKm(gear.maxDistanceMeters)}",
+                                    text = "${category.label} • ${Formatters.formatDistanceKm(gear.distanceMeters, unitSystem)} / ${Formatters.formatDistanceKm(gear.maxDistanceMeters, unitSystem)}",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )

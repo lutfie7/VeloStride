@@ -99,6 +99,11 @@ class VeloStrideRepository(
     suspend fun updateProfileTargets(
         userId: String,
         displayName: String,
+        photoUrl: String,
+        birthDateIso: String,
+        gender: String,
+        heightCm: Double,
+        weightKg: Double,
         weeklyGoalKm: Double,
         maxHr: Int,
         restingHr: Int,
@@ -109,8 +114,18 @@ class VeloStrideRepository(
         return try {
             val uid = requireUserId()
             check(uid == userId)
+            val cleanGender = when (gender.trim().uppercase()) {
+                "MALE", "FEMALE", "OTHER" -> gender.trim().uppercase()
+                else -> ""
+            }
+            val cleanBirthDate = birthDateIso.trim().take(16)
             val payload = mapOf(
                 "displayName" to displayName.trim().ifBlank { "Athlete" }.take(80),
+                "photoUrl" to photoUrl.trim().take(500),
+                "birthDateIso" to cleanBirthDate,
+                "gender" to cleanGender,
+                "heightCm" to heightCm.coerceIn(0.0, 280.0),
+                "weightKg" to weightKg.coerceIn(0.0, 400.0),
                 "weeklyDistanceGoalKm" to weeklyGoalKm.coerceIn(1.0, 1000.0),
                 "maxHr" to maxHr.coerceIn(100, 230),
                 "restingHr" to restingHr.coerceIn(30, 120),

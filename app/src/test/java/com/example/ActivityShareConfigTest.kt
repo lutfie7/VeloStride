@@ -1,11 +1,15 @@
 package com.example
 
 import com.example.core.ActivityShareHelper
+import com.example.core.AppLanguage
 import com.example.core.FlyoverDisplayConfig
 import com.example.core.FlyoverVideoExporter
+import com.example.core.Formatters
 import com.example.core.ShareCardConfig
 import com.example.core.ShareCardRatio
 import com.example.core.ShareCardStyle
+import com.example.core.UnitSystem
+import com.example.core.appStringsFor
 import com.example.data.model.SportType
 import com.example.data.model.TrackPoint
 import com.example.data.model.WorkoutActivity
@@ -152,5 +156,45 @@ class ActivityShareConfigTest {
         assertTrue(fallbackPose.pitchDeg.isFinite() && fallbackPose.pitchDeg in 28f..41f)
         assertTrue(fallbackPose.zoomScale.isFinite() && fallbackPose.zoomScale in 1.1f..1.45f)
         assertTrue(fallbackPose.rotationZDeg.isFinite())
+    }
+
+    @Test
+    fun `share card config defaults to 9-16 ratio and supports background media uri`() {
+        val defaultConfig = ShareCardConfig()
+        assertEquals(ShareCardRatio.PORTRAIT_9_16, defaultConfig.ratio)
+        assertEquals(null, defaultConfig.backgroundMediaUri)
+
+        val withMedia = defaultConfig.copy(backgroundMediaUri = "content://media/external/images/media/42")
+        assertEquals("content://media/external/images/media/42", withMedia.backgroundMediaUri)
+    }
+
+    @Test
+    fun `settings language and metric imperial unit conversions format accurately`() {
+        assertEquals(AppLanguage.ENGLISH_US, AppLanguage.fromTag("en-US"))
+        assertEquals(AppLanguage.INDONESIAN, AppLanguage.fromTag("id-ID"))
+        assertEquals(AppLanguage.ENGLISH_US, AppLanguage.fromTag("unknown"))
+
+        assertEquals(UnitSystem.METRIC, UnitSystem.fromCode("METRIC"))
+        assertEquals(UnitSystem.IMPERIAL, UnitSystem.fromCode("imperial"))
+        assertEquals(UnitSystem.METRIC, UnitSystem.fromCode(null))
+
+        assertEquals("Settings", appStringsFor(AppLanguage.ENGLISH_US).settingsTitle)
+        assertEquals("Pengaturan", appStringsFor(AppLanguage.INDONESIAN).settingsTitle)
+
+        // 10 km -> 10.00 km (Metric) vs 6.21 mi (Imperial)
+        assertEquals("10.00 km", Formatters.formatDistanceKm(10_000.0, UnitSystem.METRIC))
+        assertEquals("6.21 mi", Formatters.formatDistanceKm(10_000.0, UnitSystem.IMPERIAL))
+
+        // 300 sec/km (5:00 /km) -> 8:03 /mi
+        assertEquals("5:00 /km", Formatters.formatPace(300, UnitSystem.METRIC))
+        assertEquals("8:03 /mi", Formatters.formatPace(300, UnitSystem.IMPERIAL))
+
+        // 16.09344 km/h -> 10.0 mph
+        assertEquals("10.0 mph", Formatters.formatSpeed(16.09344, UnitSystem.IMPERIAL))
+
+        // 100 m -> 328 ft
+        assertEquals("100 m", Formatters.formatElevation(100.0, UnitSystem.METRIC))
+        assertEquals("328 ft", Formatters.formatElevation(100.0, UnitSystem.IMPERIAL))
+        assertEquals("-33ft", Formatters.formatElevationSigned(-10.0, UnitSystem.IMPERIAL))
     }
 }

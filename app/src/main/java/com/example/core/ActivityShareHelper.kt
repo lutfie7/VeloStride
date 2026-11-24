@@ -8,6 +8,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.ColorMatrix
 import android.graphics.ColorMatrixColorFilter
+import android.graphics.ImageDecoder
 import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
@@ -15,6 +16,8 @@ import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
+import android.net.Uri
+import android.os.Build
 import androidx.core.content.FileProvider
 import com.example.data.model.WorkoutActivity
 import kotlinx.coroutines.Dispatchers
@@ -52,7 +55,8 @@ enum class ShareCardRatio(
 
 data class ShareCardConfig(
     val style: ShareCardStyle = ShareCardStyle.OBSIDIAN,
-    val ratio: ShareCardRatio = ShareCardRatio.SQUARE_1_1,
+    val ratio: ShareCardRatio = ShareCardRatio.PORTRAIT_9_16,
+    val backgroundMediaUri: String? = null,
     val showMap: Boolean = true,
     val showDistance: Boolean = true,
     val showDuration: Boolean = true,
@@ -254,10 +258,69 @@ object ActivityShareHelper {
         }
     }
 
+    suspend fun loadShareBackgroundBitmap(
+        context: Context,
+        uriString: String,
+        targetWidth: Int = 1080,
+        targetHeight: Int = 1920,
+    ): Bitmap? = withContext(Dispatchers.IO) {
+        if (uriString.isBlank()) return@withContext null
+        runCatching {
+            val uri = Uri.parse(uriString)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                val source = ImageDecoder.createSource(context.contentResolver, uri)
+                ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
+                    decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                    val srcW = info.size.width.coerceAtLeast(1)
+                    val srcH = info.size.height.coerceAtLeast(1)
+                    val ratioW = srcW / targetWidth.coerceAtLeast(1)
+                    val ratioH = srcH / targetHeight.coerceAtLeast(1)
+                    val sample = minOf(ratioW, ratioH).coerceAtLeast(1)
+                    decoder.setTargetSampleSize(sample)
+                }
+            } else {
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                context.contentResolver.openInputStream(uri)?.use { stream ->
+                    BitmapFactory.decodeStream(stream, null, bounds)
+                }
+                var sample = 1
+                val w = bounds.outWidth
+                val h = bounds.outHeight
+                if (w > targetWidth && h > targetHeight) {
+                    while ((w / (sample * 2)) >= targetWidth && (h / (sample * 2)) >= targetHeight) {
+                        sample *= 2
+                    }
+                }
+                val opts = BitmapFactory.Options().apply {
+                    inSampleSize = sample
+                    inPreferredConfig = Bitmap.Config.ARGB_8888
+                }
+                context.contentResolver.openInputStream(uri)?.use { stream ->
+                    BitmapFactory.decodeStream(stream, null, opts)
+                }
+            }
+        }.getOrNull()
+    }
+
+    private fun computeCenterCropRect(srcW: Int, srcH: Int, dstW: Int, dstH: Int): Rect {
+        val srcAspect = srcW.toFloat() / srcH.coerceAtLeast(1).toFloat()
+        val dstAspect = dstW.toFloat() / dstH.coerceAtLeast(1).toFloat()
+        return if (srcAspect > dstAspect) {
+            val cropW = (srcH * dstAspect).roundToInt().coerceIn(1, srcW)
+            val left = ((srcW - cropW) / 2).coerceAtLeast(0)
+            Rect(left, 0, left + cropW, srcH)
+        } else {
+            val cropH = (srcW / dstAspect).roundToInt().coerceIn(1, srcH)
+            val top = ((srcH - cropH) / 2).coerceAtLeast(0)
+            Rect(0, top, srcW, top + cropH)
+        }
+    }
+
     fun renderShareCardBitmap(
         workout: WorkoutActivity,
         config: ShareCardConfig = ShareCardConfig(),
         mapBackdrop: Bitmap? = null,
+        backgroundBitmap: Bitmap? = null,
         progressFraction: Float = 1f,
     ): Bitmap {
         val width = config.ratio.widthPx
@@ -266,6 +329,7 @@ object ActivityShareHelper {
         val canvas = Canvas(bitmap)
 
         val cardStyle = config.style
+        val hasMediaBg = backgroundBitmap != null && !backgroundBitmap.isRecycled
         val primaryText: Int
         val secondaryText: Int
         val accentColor: Int
@@ -274,7 +338,31 @@ object ActivityShareHelper {
         val dividerColor: Int
         val pillBgColor: Int
 
-        when (cardStyle) {
+        if (hasMediaBg && backgroundBitmap != null) {
+            val srcRect = computeCenterCropRect(backgroundBitmap.width, backgroundBitmap.height, width, height)
+            val dstRect = RectF(0f, 0f, width.toFloat(), height.toFloat())
+            val photoPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+            canvas.drawBitmap(backgroundBitmap, srcRect, dstRect, photoPaint)
+
+            val scrimPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                shader = LinearGradient(
+                    0f, 0f, 0f, height.toFloat(),
+                    intArrayOf(0x96060A12.toInt(), 0x52060A12, 0xCE060A12.toInt()),
+                    floatArrayOf(0f, 0.45f, 1f),
+                    Shader.TileMode.CLAMP
+                )
+            }
+            canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), scrimPaint)
+
+            primaryText = Color.WHITE
+            secondaryText = 0xFFE2E8F0.toInt()
+            accentColor = if (cardStyle == ShareCardStyle.NEON_HUD) 0xFF00D4FF.toInt() else 0xFFFC4C02.toInt()
+            secondaryAccent = if (cardStyle == ShareCardStyle.SUNSET_PULSE) 0xFFFFD166.toInt() else 0xFF38BDF8.toInt()
+            mapBgColor = 0x780A101A
+            dividerColor = 0x55FFFFFF
+            pillBgColor = 0x70000000
+        } else {
+            when (cardStyle) {
             ShareCardStyle.OBSIDIAN -> {
                 val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                     shader = LinearGradient(
@@ -363,10 +451,12 @@ object ActivityShareHelper {
                 dividerColor = 0x66FFFFFF
                 pillBgColor = 0x55000000
             }
+            }
         }
 
-        val shadowRadius = if (cardStyle.isTransparent) 12f else 0f
-        val shadowColor = if (cardStyle.isTransparent) 0xBB000000.toInt() else Color.TRANSPARENT
+        val useTextShadow = cardStyle.isTransparent || hasMediaBg
+        val shadowRadius = if (useTextShadow) 12f else 0f
+        val shadowColor = if (useTextShadow) 0xBB000000.toInt() else Color.TRANSPARENT
 
         val metrics = buildList {
             if (config.showDistance) {
@@ -376,7 +466,7 @@ object ActivityShareHelper {
                 add(ShareMetricSpec("DURATION", Formatters.formatDuration(workout.movingTimeSeconds), primaryText))
             }
             if (config.showElevation) {
-                add(ShareMetricSpec("ELEV GAIN", "+${workout.elevationGainMeters.toInt()} m", secondaryAccent))
+                add(ShareMetricSpec("ELEV GAIN", "+${Formatters.formatElevation(workout.elevationGainMeters)}", secondaryAccent))
             }
             if (config.showPaceOrSpeed) {
                 val paceLabel = if (workout.parsedSport.isPaceBased) "AVG PACE" else "AVG SPEED"
@@ -424,21 +514,21 @@ object ActivityShareHelper {
         canvas.drawRoundRect(RectF(contentLeft, barTop, contentLeft + 112f, barTop + 9f), 5f, 5f, accentPaint)
 
         val brandSize = if (config.ratio == ShareCardRatio.LANDSCAPE_16_9) 34f else 38f
-        val veloColor = if (cardStyle == ShareCardStyle.SUMMIT_LIGHT) 0xFF252A2E.toInt() else 0xFFE6EAEE.toInt()
+        val veloColor = if (!hasMediaBg && cardStyle == ShareCardStyle.SUMMIT_LIGHT) 0xFF252A2E.toInt() else 0xFFF8FAFC.toInt()
         val strideColor = if (cardStyle == ShareCardStyle.NEON_HUD) accentColor else 0xFFF26A21.toInt()
         val veloPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = veloColor
             textSize = brandSize
             typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
             letterSpacing = -0.04f
-            if (cardStyle.isTransparent) setShadowLayer(shadowRadius, 0f, 3f, shadowColor)
+            if (useTextShadow) setShadowLayer(shadowRadius, 0f, 3f, shadowColor)
         }
         val stridePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = strideColor
             textSize = brandSize
             typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
             letterSpacing = -0.04f
-            if (cardStyle.isTransparent) setShadowLayer(shadowRadius, 0f, 3f, shadowColor)
+            if (useTextShadow) setShadowLayer(shadowRadius, 0f, 3f, shadowColor)
         }
         canvas.drawText("Velo", contentLeft, brandY, veloPaint)
         val veloWidth = veloPaint.measureText("Velo")
@@ -481,7 +571,7 @@ object ActivityShareHelper {
                 ShareCardRatio.PORTRAIT_9_16 -> 56f
             }
             typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
-            if (cardStyle.isTransparent) setShadowLayer(shadowRadius, 0f, 3f, shadowColor)
+            if (useTextShadow) setShadowLayer(shadowRadius, 0f, 2f, shadowColor)
         }
         val clippedTitle = ellipsizeToWidth(workout.title, titlePaint, usableWidth)
         canvas.drawText(clippedTitle, contentLeft, titleY, titlePaint)
@@ -497,6 +587,7 @@ object ActivityShareHelper {
                     accentColor = accentColor,
                     mapBgColor = mapBgColor,
                     mapBackdrop = mapBackdrop,
+                    hasMediaBg = hasMediaBg,
                     progressFraction = progressFraction
                 )
             }
@@ -567,13 +658,13 @@ object ActivityShareHelper {
                 textSize = labelSize
                 typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
                 letterSpacing = 0.08f
-                if (cardStyle.isTransparent) setShadowLayer(shadowRadius, 0f, 2f, shadowColor)
+                if (useTextShadow) setShadowLayer(shadowRadius, 0f, 2f, shadowColor)
             }
             val valuePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = primaryText
                 textSize = valueSize
                 typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
-                if (cardStyle.isTransparent) setShadowLayer(shadowRadius, 0f, 3f, shadowColor)
+                if (useTextShadow) setShadowLayer(shadowRadius, 0f, 3f, shadowColor)
             }
 
             val colWidth = usableWidth / cols
@@ -606,7 +697,7 @@ object ActivityShareHelper {
                 color = secondaryText
                 textSize = if (isLandscapeSplit) 22f else 26f
                 typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
-                if (cardStyle.isTransparent) setShadowLayer(shadowRadius, 0f, 2f, shadowColor)
+                if (useTextShadow) setShadowLayer(shadowRadius, 0f, 2f, shadowColor)
             }
             val devicePart = workout.deviceName?.let { "Recorded on $it" } ?: "Recorded with VeloStride"
             val elePart = if (config.showElevation) {
@@ -637,6 +728,7 @@ object ActivityShareHelper {
         accentColor: Int,
         mapBgColor: Int,
         mapBackdrop: Bitmap?,
+        hasMediaBg: Boolean = false,
         progressFraction: Float,
     ) {
         val clipPath = Path().apply {
@@ -650,12 +742,16 @@ object ActivityShareHelper {
             val mapBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = mapBgColor }
             canvas.drawRect(mapRect, mapBgPaint)
 
-            if (mapBackdrop != null && !mapBackdrop.isRecycled) {
+            if (!hasMediaBg && mapBackdrop != null && !mapBackdrop.isRecycled) {
                 val src = Rect(0, 0, mapBackdrop.width, mapBackdrop.height)
                 val imgPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
                 canvas.drawBitmap(mapBackdrop, src, mapRect, imgPaint)
             } else {
-                val gridColor = if (cardStyle == ShareCardStyle.SUMMIT_LIGHT) 0x22334155 else 0x2294A3B8
+                val gridColor = when {
+                    hasMediaBg -> 0x26FFFFFF
+                    cardStyle == ShareCardStyle.SUMMIT_LIGHT -> 0x22334155
+                    else -> 0x2294A3B8
+                }
                 val gridPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                     color = gridColor
                     strokeWidth = 2f
@@ -761,7 +857,7 @@ object ActivityShareHelper {
             canvas.drawPath(path, routePaint)
         }
 
-        if (!cardStyle.isTransparent && mapBackdrop != null && !mapBackdrop.isRecycled) {
+        if (!hasMediaBg && !cardStyle.isTransparent && mapBackdrop != null && !mapBackdrop.isRecycled) {
             val attrPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = if (cardStyle.isDarkMap) 0xB3FFFFFF.toInt() else 0xB31E293B.toInt()
                 textSize = 18f
@@ -771,6 +867,15 @@ object ActivityShareHelper {
         }
 
         canvas.restore()
+
+        if (hasMediaBg && !cardStyle.isTransparent) {
+            val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = 0x4DFFFFFF
+                style = Paint.Style.STROKE
+                strokeWidth = 3f
+            }
+            canvas.drawRoundRect(mapRect, 32f, 32f, borderPaint)
+        }
     }
 
     fun shareAsImageCard(
@@ -778,12 +883,14 @@ object ActivityShareHelper {
         workout: WorkoutActivity,
         config: ShareCardConfig = ShareCardConfig(),
         mapBackdrop: Bitmap? = null,
+        backgroundBitmap: Bitmap? = null,
         progressFraction: Float = 1f,
     ) {
         val bitmap = renderShareCardBitmap(
             workout = workout,
             config = config,
             mapBackdrop = mapBackdrop,
+            backgroundBitmap = backgroundBitmap,
             progressFraction = progressFraction
         )
         val cacheFolder = File(context.cacheDir, "shared_cards").apply { mkdirs() }

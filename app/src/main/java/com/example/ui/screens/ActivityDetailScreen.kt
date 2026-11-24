@@ -70,7 +70,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.core.ActivityShareHelper
 import com.example.core.Formatters
 import com.example.core.GpxSerializer
+import com.example.core.LocalUnitSystem
 import com.example.core.ShareCardConfig
+import com.example.core.rememberAppStrings
 import com.example.data.model.UiState
 import com.example.data.repository.ElevationRepository
 import com.example.ui.MainViewModel
@@ -106,6 +108,8 @@ fun ActivityDetailScreen(
     }
 
     val context = LocalContext.current
+    val unitSystem = LocalUnitSystem.current
+    val strings = rememberAppStrings()
     val scope = rememberCoroutineScope()
     val workout = (workoutsState as? UiState.Success)?.data?.firstOrNull { it.id == workoutId }
     val gearOptions = (gearState as? UiState.Success)?.data.orEmpty()
@@ -238,9 +242,9 @@ fun ActivityDetailScreen(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            MetricCell("Distance", Formatters.formatDistanceKm(workout.distanceMeters), valueColor = VeloOrange)
-                            MetricCell("Moving Time", Formatters.formatDuration(workout.movingTimeSeconds))
-                            MetricCell("Elevation", Formatters.formatElevation(workout.elevationGainMeters))
+                            MetricCell(strings.distanceLabel, Formatters.formatDistanceKm(workout.distanceMeters, unitSystem), valueColor = VeloOrange)
+                            MetricCell(strings.movingTimeLabel, Formatters.formatDuration(workout.movingTimeSeconds))
+                            MetricCell(strings.elevationLabel, Formatters.formatElevation(workout.elevationGainMeters, unitSystem))
                         }
                         Spacer(Modifier.height(12.dp))
                         Row(
@@ -248,8 +252,8 @@ fun ActivityDetailScreen(
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             MetricCell(
-                                label = if (workout.parsedSport.isPaceBased) "Avg Pace" else "Avg Speed",
-                                value = if (workout.parsedSport.isPaceBased) Formatters.formatPace(workout.avgPaceSecPerKm) else Formatters.formatSpeed(workout.avgSpeedKmh)
+                                label = if (workout.parsedSport.isPaceBased) strings.avgPaceLabel else strings.avgSpeedLabel,
+                                value = if (workout.parsedSport.isPaceBased) Formatters.formatPace(workout.avgPaceSecPerKm, unitSystem) else Formatters.formatSpeed(workout.avgSpeedKmh, unitSystem)
                             )
                             MetricCell(
                                 label = "Avg / Max HR",
@@ -486,11 +490,7 @@ fun ActivityDetailScreen(
                             HorizontalDivider(Modifier.padding(vertical = 6.dp))
                             splits.forEach { sp ->
                                 val eleRounded = sp.eleDiff.roundToInt()
-                                val eleText = when {
-                                    eleRounded > 0 -> "+${eleRounded}m"
-                                    eleRounded < 0 -> "${eleRounded}m"
-                                    else -> "0m"
-                                }
+                                val eleText = Formatters.formatElevationSigned(sp.eleDiff, unitSystem)
                                 val eleColor = when {
                                     eleRounded > 0 -> EmeraldPeak
                                     eleRounded < 0 -> SignalCyan
@@ -503,7 +503,7 @@ fun ActivityDetailScreen(
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
                                     Text("${sp.km}", fontFamily = JetBrainsMonoFontFamily, modifier = Modifier.width(40.dp))
-                                    Text(Formatters.formatPaceShort(sp.paceSec), fontFamily = JetBrainsMonoFontFamily, modifier = Modifier.width(72.dp))
+                                    Text(Formatters.formatPaceShort(sp.paceSec, unitSystem), fontFamily = JetBrainsMonoFontFamily, modifier = Modifier.width(72.dp))
                                     Text(
                                         text = eleText,
                                         fontFamily = JetBrainsMonoFontFamily,

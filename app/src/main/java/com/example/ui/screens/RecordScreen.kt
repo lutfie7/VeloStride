@@ -66,6 +66,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.core.Formatters
+import com.example.core.LocalUnitSystem
+import com.example.core.rememberAppStrings
 import com.example.data.model.BleConnectionStatus
 import com.example.data.model.GearItem
 import com.example.data.model.SportType
@@ -92,6 +94,8 @@ fun RecordScreen(
     onOpenManualEntry: () -> Unit,
 ) {
     val context = LocalContext.current
+    val unitSystem = LocalUnitSystem.current
+    val strings = rememberAppStrings()
     val rec by viewModel.recordingState.collectAsStateWithLifecycle()
     val ble by viewModel.bleState.collectAsStateWithLifecycle()
     val gearState by viewModel.gearState.collectAsStateWithLifecycle()
@@ -271,25 +275,25 @@ fun RecordScreen(
                         horizontalArrangement = Arrangement.SpaceAround
                     ) {
                         MetricCell(
-                            label = "Distance",
-                            value = Formatters.formatDistanceKm(rec.distanceMeters),
+                            label = strings.distanceLabel,
+                            value = Formatters.formatDistanceKm(rec.distanceMeters, unitSystem),
                             valueColor = VeloOrange
                         )
                         MetricCell(
-                            label = if (rec.sportType.isPaceBased) "Current Pace" else "Speed",
+                            label = if (rec.sportType.isPaceBased) strings.avgPaceLabel else strings.avgSpeedLabel,
                             value = if (rec.sportType.isPaceBased) {
-                                Formatters.formatPace(rec.currentPaceSecPerKm)
+                                Formatters.formatPace(rec.currentPaceSecPerKm, unitSystem)
                             } else {
-                                Formatters.formatSpeed(rec.currentSpeedKmh)
+                                Formatters.formatSpeed(rec.currentSpeedKmh, unitSystem)
                             }
                         )
                         MetricCell(
                             label = if (rec.currentAltitudeMeters != null) {
-                                "Gain (${rec.currentAltitudeMeters!!.toInt()}m alt)"
+                                "Gain (${Formatters.formatElevation(rec.currentAltitudeMeters!!, unitSystem)} alt)"
                             } else {
-                                "Elev Gain"
+                                strings.elevGainLabel
                             },
-                            value = Formatters.formatElevation(rec.elevationGainMeters),
+                            value = Formatters.formatElevation(rec.elevationGainMeters, unitSystem),
                             valueColor = SignalCyan
                         )
                     }

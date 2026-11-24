@@ -16,21 +16,35 @@ import com.google.firebase.ai.type.PublicPreviewAPI
 import com.google.firebase.ai.type.Tool
 import com.google.firebase.ai.type.ToolConfig
 import com.google.firebase.ai.type.content
+import com.google.firebase.ai.type.generationConfig
 import com.google.firebase.ai.type.retrievalConfig
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.withTimeout
+import java.net.SocketTimeoutException
 
 class AthleteIntelligenceRepository {
+    private val coachGenerationConfig = generationConfig {
+        temperature = 0.55f
+        maxOutputTokens = 700
+    }
+
     private val primaryModel by lazy {
-        Firebase.ai.generativeModel("gemini-3.8-flash")
+        Firebase.ai.generativeModel(
+            modelName = "gemini-3.8-flash",
+            generationConfig = coachGenerationConfig
+        )
     }
 
     private val fallbackModel by lazy {
-        Firebase.ai.generativeModel("gemini-3.5-flash-lite")
+        Firebase.ai.generativeModel(
+            modelName = "gemini-3.5-flash-lite",
+            generationConfig = coachGenerationConfig
+        )
     }
 
     @OptIn(PublicPreviewAPI::class)
@@ -48,41 +62,46 @@ class AthleteIntelligenceRepository {
                 "You are VeloStride's outdoor route & trail scout. Use Google Maps data to recommend accurate, real-world parks, running tracks, hiking trails, cycling routes, and outdoor workout spots near the athlete's coordinates. Keep responses concise, structured, and practical with terrain/distance notes."
             )
         }
-        val candidateModels = listOf("gemini-4-hydrogen", "gemini-4-hydrogen", "gemini-3.8-flash")
+        val candidateModels = listOf("gemini-4-hydrogen", "gemini-3.8-flash")
 
-        val response = withTimeout(60_000L) {
-            var lastError: Exception? = null
-            var result: com.google.firebase.ai.type.GenerateContentResponse? = null
-            for (idx in candidateModels.indices) {
-                val modelName = candidateModels[idx]
-                if (idx > 0) {
-                    delay(if (idx == 1) 800L else 500L)
-                }
-                try {
+        var lastError: Exception? = null
+        var result: com.google.firebase.ai.type.GenerateContentResponse? = null
+        for (idx in candidateModels.indices) {
+            val modelName = candidateModels[idx]
+            if (idx > 0) {
+                delay(400L)
+            }
+            try {
+                result = withTimeout(25_000L) {
                     val mapsModel = Firebase.ai.generativeModel(
                         modelName = modelName,
                         tools = listOf(Tool.googleMaps()),
                         toolConfig = ToolConfig(retrievalConfig = config),
-                        systemInstruction = sysInstruction
+                        systemInstruction = sysInstruction,
+                        generationConfig = coachGenerationConfig
                     )
-                    result = mapsModel.generateContent(query)
-                    break
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    lastError = e
-                    val canRetry = isTransientDemandError(e) && idx < candidateModels.lastIndex
-                    Log.w(TAG, "Maps grounding attempt ${idx + 1} ($modelName) failed: ${e.message}")
-                    if (!canRetry) throw e
+                    mapsModel.generateContent(query)
                 }
+                break
+            } catch (e: TimeoutCancellationException) {
+                lastError = e
+                Log.w(TAG, "Maps grounding attempt ${idx + 1} ($modelName) timed out")
+                if (idx == candidateModels.lastIndex) throw e
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                lastError = e
+                val canRetry = isTransientDemandError(e) && idx < candidateModels.lastIndex
+                Log.w(TAG, "Maps grounding attempt ${idx + 1} ($modelName) failed: ${e.message}")
+                if (!canRetry) throw e
             }
-            result ?: throw (lastError ?: IllegalStateException("Maps grounding failed."))
         }
+        val finalResult = result ?: throw (lastError ?: IllegalStateException("Maps grounding failed."))
 
-        val answerText = response.text?.trim().orEmpty()
+        val answerText = finalResult.text?.trim().orEmpty()
             .ifBlank { "No nearby locations returned for \"$query\"." }
 
-        val places = response.candidates.firstOrNull()
+        val places = finalResult.candidates.firstOrNull()
             ?.groundingMetadata
             ?.groundingChunks
             ?.mapNotNull { chunk ->
@@ -113,19 +132,20 @@ class AthleteIntelligenceRepository {
         profile: AthleteProfile,
         analytics: PerformanceAnalytics,
     ): Flow<String> = flow {
+        val bioLine = buildBiometricsSummary(profile)
         val prompt = buildString {
-            appendLine("You are an elite endurance sports physiologist & Strava Athlete Intelligence coach.")
-            appendLine("Analyze this recorded workout in concise, high-signal athletic prose (3 short sections: Effort Verdict, Physiological Breakdown, Next Step).")
-            appendLine("Workout Title: ${workout.title}")
-            appendLine("Sport: ${workout.parsedSport.label}")
-            appendLine("Distance: ${Formatters.formatDistanceKm(workout.distanceMeters)}")
-            appendLine("Moving Time: ${Formatters.formatDuration(workout.movingTimeSeconds)}")
-            appendLine("Elevation Gain: ${Formatters.formatElevation(workout.elevationGainMeters)}")
+            appendLine("You are an elite endurance sports physiologist & Athlete Intelligence coach.")
+            appendLine("Analyze this workout concisely in 3 short sections: Effort Verdict, Physiological Breakdown (factoring in age/gender/height/weight/BMI & HR zones if present), Next Step.")
+            appendLine("Title: ${workout.title} | Sport: ${workout.parsedSport.label}")
+            appendLine("Distance: ${Formatters.formatDistanceKm(workout.distanceMeters)} | Moving Time: ${Formatters.formatDuration(workout.movingTimeSeconds)} | Elev: ${Formatters.formatElevation(workout.elevationGainMeters)}")
             appendLine("Avg Pace: ${Formatters.formatPace(workout.avgPaceSecPerKm)} | Avg Speed: ${Formatters.formatSpeed(workout.avgSpeedKmh)}")
-            appendLine("Heart Rate: Avg ${workout.avgHeartRate} bpm / Max ${workout.maxHeartRate} bpm (Athlete MaxHR=${profile.maxHr}, RestingHR=${profile.restingHr})")
-            appendLine("HR Zones (seconds Z1..Z5): ${workout.hrZoneSeconds.joinToString(", ")}")
-            appendLine("Relative Effort: ${workout.relativeEffort} | RPE: ${workout.perceivedExertion}/10 | Device: ${workout.deviceName ?: "Phone GPS"}")
-            appendLine("Current Athlete Context: VO2 Max=${analytics.vo2Max} (${analytics.vo2MaxClassification}), Fitness CTL=${analytics.fitnessCtl}, Fatigue ATL=${analytics.fatigueAtl}, Form TSB=${analytics.formTsb}, Recovery=${analytics.recoveryScore}%.")
+            appendLine("HR: Avg ${workout.avgHeartRate} / Max ${workout.maxHeartRate} bpm (Profile MaxHR=${profile.maxHr}, RestHR=${profile.restingHr}, FTP=${profile.ftpWatts}W)")
+            appendLine("HR Zones (s Z1..Z5): ${workout.hrZoneSeconds.joinToString(", ")}")
+            appendLine("Effort: ${workout.relativeEffort} | RPE: ${workout.perceivedExertion}/10 | Device: ${workout.deviceName ?: "Phone GPS"}")
+            if (bioLine.isNotBlank()) {
+                appendLine("Athlete Biometrics: $bioLine")
+            }
+            appendLine("Current Form: RAI=${analytics.raiScore}/100 (${analytics.raiClassification}), VO2 Max=${analytics.vo2Max} (${analytics.vo2MaxClassification}), CTL=${analytics.fitnessCtl}, ATL=${analytics.fatigueAtl}, TSB=${analytics.formTsb}, Recovery=${analytics.recoveryScore}%.")
         }
 
         streamWithRetryAndFallback(prompt)
@@ -138,96 +158,161 @@ class AthleteIntelligenceRepository {
         recentWorkouts: List<WorkoutActivity>,
         latestHealth: DailyHealthLog?,
     ): Flow<String> = flow {
-        val recentSummary = recentWorkouts.take(6).joinToString("\n") { w ->
-            "- ${w.title} (${w.parsedSport.label}): ${Formatters.formatDistanceKm(w.distanceMeters)}, ${Formatters.formatDuration(w.movingTimeSeconds)}, AvgHR ${w.avgHeartRate} bpm, Effort ${w.relativeEffort}"
+        val recentSummary = recentWorkouts.take(5).joinToString("\n") { w ->
+            "- ${w.title} (${w.parsedSport.label}): ${Formatters.formatDistanceKm(w.distanceMeters)}, ${Formatters.formatDuration(w.movingTimeSeconds)}, HR ${w.avgHeartRate}, Effort ${w.relativeEffort}"
         }.ifBlank { "No recorded workouts yet." }
+        val bioLine = buildBiometricsSummary(profile)
 
         val prompt = buildString {
-            appendLine("You are VeloStride AI Coach, an expert running & cycling performance coach.")
-            appendLine("Respond clearly and practically in the same language as the user's question (Indonesian or English).")
-            appendLine()
-            appendLine("ATHLETE BASELINE & GOALS:")
-            appendLine("- Name: ${profile.displayName}")
-            appendLine("- Primary Sport: ${profile.preferredSport} | Weekly Distance Goal: ${profile.weeklyDistanceGoalKm} km")
-            appendLine("- MaxHR: ${profile.maxHr} bpm | RestingHR: ${profile.restingHr} bpm | FTP: ${profile.ftpWatts} W")
-            appendLine()
-            appendLine("COMPREHENSIVE PERFORMANCE ANALYTICS:")
-            appendLine("- Estimated VO2 Max: ${analytics.vo2Max} ml/kg/min (${analytics.vo2MaxClassification}, trend ${analytics.vo2MaxTrendDelta})")
-            appendLine("- Fitness (CTL): ${analytics.fitnessCtl} | Fatigue (ATL): ${analytics.fatigueAtl} | Form (TSB): ${analytics.formTsb}")
-            appendLine("- Acute:Chronic Workload Ratio (ACWR): ${analytics.acuteChronicRatio} (${analytics.loadStatusLabel})")
-            appendLine("- Weekly Relative Effort: ${analytics.weeklyRelativeEffort}")
-            appendLine("- Recovery Readiness: ${analytics.recoveryScore}% (${analytics.recoveryStatusLabel}), recommended recovery window: ${analytics.recommendedRecoveryHours}h")
-            appendLine("- HRV RMSSD: ${analytics.hrvRmssdMs} ms | Last Sleep: ${analytics.sleepMinutes / 60}h ${analytics.sleepMinutes % 60}m (Score ${analytics.sleepScore}/100)")
-            if (latestHealth != null) {
-                appendLine("- Today Wearable Sync (${latestHealth.sourceDevice}): ${latestHealth.steps} steps, ${latestHealth.activeCalories} active kcal")
+            appendLine("You are VeloStride AI Coach, an expert endurance performance physiologist.")
+            appendLine("Reply clearly and practically in the same language as the user's question (Indonesian or English).")
+            appendLine("ATHLETE: ${profile.displayName} | Sport: ${profile.preferredSport} | Goal: ${profile.weeklyDistanceGoalKm} km/wk | MaxHR ${profile.maxHr} | RestHR ${profile.restingHr} | FTP ${profile.ftpWatts}W")
+            if (bioLine.isNotBlank()) {
+                appendLine("BIOMETRICS: $bioLine")
             }
-            appendLine()
-            appendLine("RECENT WORKOUT HISTORY:")
+            appendLine("ANALYTICS: RAI ${analytics.raiScore}/100 (${analytics.raiClassification}: Aerobic ${analytics.raiAerobicComponent}, Load ${analytics.raiLoadComponent}, Recovery ${analytics.raiRecoveryComponent}), VO2 Max ${analytics.vo2Max} (${analytics.vo2MaxClassification}), CTL ${analytics.fitnessCtl}, ATL ${analytics.fatigueAtl}, TSB ${analytics.formTsb}, ACWR ${analytics.acuteChronicRatio} (${analytics.loadStatusLabel}), Recovery ${analytics.recoveryScore}% (${analytics.recoveryStatusLabel}), HRV ${analytics.hrvRmssdMs}ms, Sleep ${analytics.sleepMinutes / 60}h${analytics.sleepMinutes % 60}m (${analytics.sleepScore}/100).")
+            if (latestHealth != null) {
+                appendLine("WEARABLE TODAY (${latestHealth.sourceDevice}): ${latestHealth.steps} steps, ${latestHealth.activeCalories} kcal")
+            }
+            appendLine("RECENT SESSIONS:")
             appendLine(recentSummary)
-            appendLine()
-            appendLine("USER REQUEST / QUESTION:")
-            appendLine(userQuestion)
+            appendLine("USER QUESTION: $userQuestion")
         }
 
         streamWithRetryAndFallback(prompt)
     }
 
+    private fun buildBiometricsSummary(profile: AthleteProfile): String {
+        val parts = mutableListOf<String>()
+        profile.ageYears()?.let { parts.add("Age $it yrs") }
+        when (profile.gender.uppercase()) {
+            "MALE" -> parts.add("Gender Male")
+            "FEMALE" -> parts.add("Gender Female")
+            "OTHER" -> parts.add("Gender Other")
+        }
+        if (profile.heightCm > 0.0) parts.add("Height ${profile.heightCm.toInt()} cm")
+        if (profile.weightKg > 0.0) parts.add("Weight ${String.format(java.util.Locale.US, "%.1f", profile.weightKg)} kg")
+        profile.bmi()?.let { bmi ->
+            val cat = profile.bmiCategory().orEmpty()
+            parts.add("BMI $bmi ($cat)")
+        }
+        if (profile.weightKg > 0.0 && profile.ftpWatts > 0) {
+            val wPerKg = String.format(java.util.Locale.US, "%.2f", profile.ftpWatts / profile.weightKg)
+            parts.add("Power/Weight $wPerKg W/kg")
+        }
+        return parts.joinToString(" | ")
+    }
+
+    private data class AiAttempt(
+        val label: String,
+        val model: GenerativeModel,
+        val timeoutMs: Long,
+        val useStreaming: Boolean,
+    )
+
     private suspend fun FlowCollector<String>.streamWithRetryAndFallback(prompt: String) {
-        val attempts: List<Pair<String, GenerativeModel>> = listOf(
-            "gemini-3.8-flash" to primaryModel,
-            "gemini-3.8-flash (retry)" to primaryModel,
-            "gemini-3.5-flash-lite" to fallbackModel
+        // Attempt 1: Primary gemini-3.8-flash streaming (bounded 20s timeout so stalls fall back fast).
+        // Attempt 2: Fallback gemini-3.5-flash-lite streaming (20s timeout, separate quota & ultra-fast).
+        // Attempt 3: Fallback gemini-3.5-flash-lite unary generateContent (20s timeout in case SSE streaming stalls).
+        val attempts = listOf(
+            AiAttempt("gemini-3.8-flash (stream)", primaryModel, 20_000L, useStreaming = true),
+            AiAttempt("gemini-3.5-flash-lite (stream)", fallbackModel, 20_000L, useStreaming = true),
+            AiAttempt("gemini-3.5-flash-lite (unary)", fallbackModel, 20_000L, useStreaming = false)
         )
 
-        withTimeout(60_000L) {
-            for (idx in attempts.indices) {
-                val (label, targetModel) = attempts[idx]
-                if (idx > 0) {
-                    delay(if (idx == 1) 900L else 500L)
-                }
-                val accumulated = StringBuilder()
-                var emittedAny = false
-                try {
-                    targetModel.generateContentStream(prompt).collect { chunk ->
-                        val text = chunk.text.orEmpty()
+        var lastError: Exception? = null
+        for (idx in attempts.indices) {
+            val attempt = attempts[idx]
+            if (idx > 0) {
+                delay(450L)
+            }
+            val accumulated = StringBuilder()
+            var emittedAny = false
+            try {
+                withTimeout(attempt.timeoutMs) {
+                    if (attempt.useStreaming) {
+                        attempt.model.generateContentStream(prompt).collect { chunk ->
+                            val text = chunk.text.orEmpty()
+                            if (text.isNotEmpty()) {
+                                emittedAny = true
+                                accumulated.append(text)
+                                emit(accumulated.toString())
+                            }
+                        }
+                    } else {
+                        val resp = attempt.model.generateContent(prompt)
+                        val text = resp.text.orEmpty().trim()
                         if (text.isNotEmpty()) {
                             emittedAny = true
                             accumulated.append(text)
-                            emit(accumulated.toString())
+                            emit(text)
                         }
                     }
-                    if (accumulated.isNotBlank()) return@withTimeout
-                    if (idx == attempts.lastIndex) return@withTimeout
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    val canRetry = !emittedAny && isTransientDemandError(e) && idx < attempts.lastIndex
-                    Log.w(TAG, "AI stream attempt ${idx + 1} ($label) failed: ${e.message}")
-                    if (!canRetry) throw e
                 }
+                if (accumulated.isNotBlank()) return
+                if (idx == attempts.lastIndex) return
+            } catch (e: TimeoutCancellationException) {
+                lastError = e
+                Log.w(TAG, "AI attempt ${idx + 1} (${attempt.label}) timed out after ${attempt.timeoutMs}ms")
+                if (emittedAny || idx == attempts.lastIndex) throw e
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                lastError = e
+                val canFallback = !emittedAny && isTransientDemandError(e) && idx < attempts.lastIndex
+                Log.w(TAG, "AI attempt ${idx + 1} (${attempt.label}) failed: ${e.message}")
+                if (!canFallback) throw e
             }
         }
+        lastError?.let { throw it }
     }
 
     companion object {
         private const val TAG = "AthleteIntelRepo"
 
+        fun isTimeoutError(throwable: Throwable): Boolean {
+            if (generateSequence(throwable) { it.cause }.any {
+                    it is TimeoutCancellationException || it is SocketTimeoutException
+                }
+            ) {
+                return true
+            }
+            val messages = collectMessagesLowercase(throwable)
+            return messages.contains("timeout") ||
+                messages.contains("timed out") ||
+                messages.contains("deadline_exceeded") ||
+                messages.contains("deadline exceeded")
+        }
+
+        fun isQuotaExceededError(throwable: Throwable): Boolean {
+            val messages = collectMessagesLowercase(throwable)
+            if (messages.isBlank()) return false
+            return messages.contains("quota") ||
+                messages.contains("exceeded") ||
+                messages.contains("resource_exhausted") ||
+                messages.contains("resource exhausted") ||
+                messages.contains("429") ||
+                messages.contains("too many requests") ||
+                messages.contains("rate limit") ||
+                messages.contains("rate_limit")
+        }
+
         fun isTransientDemandError(throwable: Throwable): Boolean {
-            val messages = generateSequence(throwable) { it.cause }
-                .mapNotNull { it.message }
-                .joinToString(" | ")
-                .lowercase()
+            if (isTimeoutError(throwable) || isQuotaExceededError(throwable)) return true
+            val messages = collectMessagesLowercase(throwable)
             if (messages.isBlank()) return false
             return messages.contains("high demand") ||
                 messages.contains("spikes in demand") ||
                 messages.contains("503") ||
-                messages.contains("429") ||
                 messages.contains("overloaded") ||
                 messages.contains("unavailable") ||
-                messages.contains("resource_exhausted") ||
-                messages.contains("resource exhausted") ||
-                messages.contains("too many requests") ||
                 messages.contains("temporarily")
         }
+
+        private fun collectMessagesLowercase(throwable: Throwable): String =
+            generateSequence(throwable) { it.cause }
+                .mapNotNull { it.message }
+                .joinToString(" | ")
+                .lowercase()
     }
 }

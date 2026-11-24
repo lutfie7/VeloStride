@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">VeloStride</string>
+    <string name="tracking_channel_name">Pelacakan Aktivitas</string>
+    <string name="tracking_channel_desc">Status pelacakan GPS langsung dan detak jantung wearable</string>
+    <string name="nav_feed">Beranda</string>
+    <string name="nav_maps">Peta</string>
+    <string name="nav_record">Rekam</string>
+    <string name="nav_progress">Progres</string>
+    <string name="nav_devices">Perangkat</string>
+    <string name="sign_in_google">Masuk dengan Google</string>
+    <string name="sign_out">Keluar</string>
+</resources>

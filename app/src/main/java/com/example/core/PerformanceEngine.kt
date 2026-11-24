@@ -200,12 +200,28 @@ object PerformanceEngine {
             0.0
         }
 
+        val raiResult = computeRaiScore(
+            vo2Max = baseVo2,
+            fitnessCtl = currentPoint.fitnessCtl,
+            formTsb = currentPoint.formTsb,
+            acwr = acwr,
+            recoveryScore = recoveryScore,
+            workoutCount28d = dailyLoads.count { it > 0 },
+            profile = profile
+        )
+
         val prs = buildPersonalRecords(workouts)
 
         return PerformanceAnalytics(
             vo2Max = baseVo2,
             vo2MaxTrendDelta = vo2Delta,
             vo2MaxClassification = classifyVo2Max(baseVo2),
+            raiScore = raiResult.score,
+            raiClassification = raiResult.classification,
+            raiAerobicComponent = raiResult.aerobicComponent,
+            raiLoadComponent = raiResult.loadComponent,
+            raiRecoveryComponent = raiResult.recoveryComponent,
+            raiProfileCalibrated = raiResult.calibrated,
             fitnessCtl = currentPoint.fitnessCtl,
             fatigueAtl = currentPoint.fatigueAtl,
             formTsb = currentPoint.formTsb,
@@ -220,6 +236,80 @@ object PerformanceEngine {
             sleepScore = sleepScore,
             trainingSeries = last14,
             personalRecords = prs
+        )
+    }
+
+    data class RaiBreakdown(
+        val score: Int,
+        val classification: String,
+        val aerobicComponent: Int,
+        val loadComponent: Int,
+        val recoveryComponent: Int,
+        val calibrated: Boolean,
+    )
+
+    fun computeRaiScore(
+        vo2Max: Double,
+        fitnessCtl: Double,
+        formTsb: Double,
+        acwr: Double,
+        recoveryScore: Int,
+        workoutCount28d: Int,
+        profile: AthleteProfile,
+    ): RaiBreakdown {
+        val age = profile.ageYears()
+        val genderOffset = when (profile.gender.uppercase()) {
+            "FEMALE" -> -4.0
+            "MALE" -> 1.0
+            else -> 0.0
+        }
+        val ageOffset = if (age != null && age > 25) ((age - 25) * 0.22).coerceAtMost(9.0) else 0.0
+        val vo2Benchmark = (46.0 + genderOffset - ageOffset).coerceIn(32.0, 52.0)
+
+        var aerobic = (((vo2Max / vo2Benchmark) * 74.0)).roundToInt().coerceIn(20, 96)
+        val bmi = profile.bmi()
+        if (bmi != null) {
+            aerobic = when {
+                bmi in 18.5..24.5 -> (aerobic + 4).coerceAtMost(99)
+                bmi > 29.0 -> (aerobic - 3).coerceAtLeast(18)
+                else -> aerobic
+            }
+        }
+        if (profile.weightKg in 35.0..180.0 && profile.ftpWatts > 50) {
+            val wKg = profile.ftpWatts / profile.weightKg
+            if (wKg >= 3.2) {
+                aerobic = (aerobic + 3).coerceAtMost(99)
+            }
+        }
+
+        val ctlBase = (((fitnessCtl - 15.0) / 65.0) * 65.0 + 30.0).coerceIn(24.0, 92.0)
+        val consistencyBonus = (workoutCount28d.coerceAtMost(16) * 0.5)
+        val acwrModifier = when {
+            acwr in 0.80..1.30 -> 6.0
+            acwr in 1.31..1.45 -> 0.0
+            acwr > 1.45 -> -10.0
+            else -> -3.0
+        }
+        val load = (ctlBase + consistencyBonus + acwrModifier).roundToInt().coerceIn(18, 99)
+
+        val formMod = if (formTsb in -10.0..12.0) 4 else if (formTsb < -22.0) -6 else 0
+        val recovery = (recoveryScore + formMod).coerceIn(15, 99)
+
+        val composite = (aerobic * 0.45 + load * 0.30 + recovery * 0.25).roundToInt().coerceIn(15, 99)
+        val classification = when {
+            composite >= 85 -> "Elite"
+            composite >= 72 -> "Strong"
+            composite >= 58 -> "Steady"
+            composite >= 42 -> "Developing"
+            else -> "Building"
+        }
+        return RaiBreakdown(
+            score = composite,
+            classification = classification,
+            aerobicComponent = aerobic,
+            loadComponent = load,
+            recoveryComponent = recovery,
+            calibrated = profile.hasBiometrics()
         )
     }
 

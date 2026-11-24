@@ -115,7 +115,18 @@ test("Owner can create & partially update profile, workouts, devices, gear, rout
   await assertSucceeds(
     aliceDb.collection("users").doc(ALICE_UID).update({
       weeklyDistanceGoalKm: 60,
+      photoUrl: "content://media/picker/101",
+      birthDateIso: "1995-06-15",
+      gender: "MALE",
+      heightCm: 174,
+      weightKg: 67.5,
       updatedAt: new Date(Date.now() - 1000),
+    })
+  );
+  await assertFails(
+    aliceDb.collection("users").doc(ALICE_UID).update({
+      gender: "INVALID_VALUE",
+      updatedAt: new Date(Date.now() - 500),
     })
   );
 

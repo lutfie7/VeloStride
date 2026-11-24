@@ -37,6 +37,10 @@ service cloud.firestore {
       return data.userId == userId &&
         data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80 &&
         (!('photoUrl' in data) || (data.photoUrl is string && data.photoUrl.size() <= 500)) &&
+        (!('birthDateIso' in data) || (data.birthDateIso is string && data.birthDateIso.size() <= 16)) &&
+        (!('gender' in data) || data.gender in ['', 'MALE', 'FEMALE', 'OTHER']) &&
+        (!('heightCm' in data) || (data.heightCm is number && data.heightCm >= 0 && data.heightCm <= 280)) &&
+        (!('weightKg' in data) || (data.weightKg is number && data.weightKg >= 0 && data.weightKg <= 400)) &&
         data.weeklyDistanceGoalKm is number && data.weeklyDistanceGoalKm >= 1 && data.weeklyDistanceGoalKm <= 1000 &&
         data.maxHr is int && data.maxHr >= 100 && data.maxHr <= 230 &&
         data.restingHr is int && data.restingHr >= 30 && data.restingHr <= 120 &&
@@ -199,7 +203,8 @@ service cloud.firestore {
           'createdAt', 'updatedAt'
         ]) &&
         incoming().keys().hasOnly([
-          'userId', 'displayName', 'photoUrl', 'weeklyDistanceGoalKm', 'maxHr',
+          'userId', 'displayName', 'photoUrl', 'birthDateIso', 'gender',
+          'heightCm', 'weightKg', 'weeklyDistanceGoalKm', 'maxHr',
           'restingHr', 'ftpWatts', 'totalDistanceMeters', 'totalWorkouts',
           'preferredSport', 'createdAt', 'updatedAt'
         ]) &&
@@ -211,7 +216,8 @@ service cloud.firestore {
         incoming().createdAt == existing().createdAt &&
         isValidAthleteProfile(incoming(), userId) &&
         incoming().diff(existing()).affectedKeys().hasOnly([
-          'displayName', 'photoUrl', 'weeklyDistanceGoalKm', 'maxHr', 'restingHr',
+          'displayName', 'photoUrl', 'birthDateIso', 'gender', 'heightCm',
+          'weightKg', 'weeklyDistanceGoalKm', 'maxHr', 'restingHr',
           'ftpWatts', 'totalDistanceMeters', 'totalWorkouts', 'preferredSport', 'updatedAt'
         ]);
 
