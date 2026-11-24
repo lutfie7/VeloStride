@@ -42,6 +42,7 @@ import com.google.firebase.Timestamp
 import com.google.firebase.firestore.FirebaseFirestoreException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -86,6 +87,9 @@ class MainViewModel(
 
     private val _isBandSyncing = MutableStateFlow(false)
     val isBandSyncing: StateFlow<Boolean> = _isBandSyncing.asStateFlow()
+
+    private val _isRefreshing = MutableStateFlow(false)
+    val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
 
     val profileState: StateFlow<UiState<AthleteProfile>> = repository.observeProfile(currentUserId)
         .map<AthleteProfile?, UiState<AthleteProfile>> { profile ->
@@ -192,6 +196,23 @@ class MainViewModel(
                         )
                     )
                 }
+            }
+        }
+    }
+
+    fun refreshAllData() {
+        if (_isRefreshing.value) return
+        viewModelScope.launch {
+            _isRefreshing.value = true
+            try {
+                bleManager.refreshAdapterState()
+                val hcState = healthConnectManager.checkAvailabilityAndPermissions()
+                if (hcState == HealthConnectState.AVAILABLE_GRANTED) {
+                    syncHealthConnectAndPersist(silentIfNoNewWorkouts = true)
+                }
+                delay(450L)
+            } finally {
+                _isRefreshing.value = false
             }
         }
     }
@@ -572,6 +593,7 @@ class MainViewModel(
 
     override fun onCleared() {
         liveVoiceCoach.stopConversation()
+        bleManager.release()
         super.onCleared()
     }
 

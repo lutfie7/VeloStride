@@ -40,7 +40,6 @@ import androidx.compose.material.icons.rounded.Explore
 import androidx.compose.material.icons.rounded.FileDownload
 import androidx.compose.material.icons.rounded.LocalFireDepartment
 import androidx.compose.material.icons.rounded.Place
-import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material.icons.rounded.Route
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Star
@@ -65,10 +64,12 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -77,6 +78,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -84,6 +86,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -101,6 +104,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
 import com.example.core.Formatters
 import com.example.core.GpxSerializer
+import com.example.core.MapLayerType
 import com.example.core.MapProjection
 import com.example.data.model.MapsGroundingResult
 import com.example.data.model.SavedRoute
@@ -111,12 +115,14 @@ import com.example.data.model.UiState
 import com.example.data.model.WorkoutActivity
 import com.example.ui.MainViewModel
 import com.example.ui.components.MapAttributionBadge
+import com.example.ui.components.MapControlsOverlay
 import com.example.ui.components.MapTileBackground
 import com.example.ui.components.MetricCell
 import com.example.ui.components.MultiTrackMapCanvas
 import com.example.ui.components.RoutePolylineCanvas
 import com.example.ui.components.SportBadge
 import com.example.ui.components.SportSelectorGrid
+import com.example.ui.components.mapTransformGestures
 import com.example.ui.theme.EmeraldPeak
 import com.example.ui.theme.JetBrainsMonoFontFamily
 import com.example.ui.theme.SignalCyan
@@ -132,6 +138,7 @@ fun MapsRoutesScreen(viewModel: MainViewModel) {
     val segmentsState by viewModel.segmentsState.collectAsStateWithLifecycle()
     val workoutsState by viewModel.workoutsState.collectAsStateWithLifecycle()
     val mapsGroundingState by viewModel.mapsGroundingState.collectAsStateWithLifecycle()
+    val isRefreshing by viewModel.isRefreshing.collectAsStateWithLifecycle()
 
     var selectedSubTab by remember { mutableIntStateOf(0) }
     var showAddSegmentDialog by remember { mutableStateOf(false) }
@@ -180,6 +187,8 @@ fun MapsRoutesScreen(viewModel: MainViewModel) {
         when (selectedSubTab) {
             0 -> RouteExplorerList(
                 routes = routes,
+                isRefreshing = isRefreshing,
+                onRefresh = { viewModel.refreshAllData() },
                 onToggleStar = { viewModel.toggleRouteStar(it) },
                 onOpenBuilder = { selectedSubTab = 2 },
                 onOpenNearbyMaps = { selectedSubTab = 1 },
@@ -206,9 +215,15 @@ fun MapsRoutesScreen(viewModel: MainViewModel) {
                     selectedSubTab = 0
                 }
             )
-            3 -> PersonalHeatmapView(workouts = workouts)
+            3 -> PersonalHeatmapView(
+                workouts = workouts,
+                isRefreshing = isRefreshing,
+                onRefresh = { viewModel.refreshAllData() }
+            )
             4 -> SegmentsLeaderboardView(
                 segments = segments,
+                isRefreshing = isRefreshing,
+                onRefresh = { viewModel.refreshAllData() },
                 onToggleStar = { viewModel.toggleSegmentStar(it) },
                 onOpenAddSegment = { showAddSegmentDialog = true }
             )
@@ -226,20 +241,30 @@ fun MapsRoutesScreen(viewModel: MainViewModel) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun RouteExplorerList(
     routes: List<SavedRoute>,
+    isRefreshing: Boolean,
+    onRefresh: () -> Unit,
     onToggleStar: (SavedRoute) -> Unit,
     onOpenBuilder: () -> Unit,
     onOpenNearbyMaps: () -> Unit,
     onImportGpxRoute: () -> Unit,
     onExportGpxRoute: (SavedRoute) -> Unit,
 ) {
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+    PullToRefreshBox(
+        isRefreshing = isRefreshing,
+        onRefresh = onRefresh,
+        modifier = Modifier
+            .fillMaxSize()
+            .testTag("maps_explorer_pull_refresh")
     ) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
         item {
             Card(
                 shape = RoundedCornerShape(20.dp),
@@ -433,6 +458,7 @@ private fun RouteExplorerList(
                 }
             }
         }
+    }
     }
 }
 
@@ -673,6 +699,22 @@ private fun InteractiveRouteBuilder(
     var centerLng by remember { mutableDoubleStateOf(workoutSeed?.lng ?: 106.8020) }
     var zoomLevel by remember { mutableIntStateOf(14) }
 
+    var selectedLayer by remember(darkTheme) {
+        mutableStateOf(if (darkTheme) MapLayerType.DARK else MapLayerType.STANDARD)
+    }
+    var is3DView by remember { mutableStateOf(false) }
+    var bearingDeg by remember { mutableFloatStateOf(0f) }
+
+    val baseViewport = remember(centerLat, centerLng, zoomLevel) {
+        MapProjection.computeViewportForCenter(
+            centerLat = centerLat,
+            centerLng = centerLng,
+            zoom = zoomLevel
+        )
+    }
+    var activeViewport by remember(baseViewport) { mutableStateOf(baseViewport) }
+    val isTransformed = activeViewport != baseViewport || abs(bearingDeg) > 1f
+
     val trackPoints = remember { mutableStateListOf<TrackPoint>() }
     var routeName by remember { mutableStateOf("") }
     var selectedSport by remember { mutableStateOf(SportType.RUN) }
@@ -736,7 +778,7 @@ private fun InteractiveRouteBuilder(
                         Column(Modifier.weight(1f)) {
                             Text("Interactive Route Map", style = MaterialTheme.typography.titleLarge)
                             Text(
-                                "Tap on the map streets to plot GPS waypoints",
+                                "Tap to plot GPS points • Pinch/drag to zoom & pan",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -768,76 +810,114 @@ private fun InteractiveRouteBuilder(
                     BoxWithConstraints(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(270.dp)
+                            .height(290.dp)
                             .clip(RoundedCornerShape(14.dp))
-                            .background(if (darkTheme) Color(0xFF10151E) else Color(0xFFECEAE4))
+                            .background(if (selectedLayer == MapLayerType.DARK || darkTheme) Color(0xFF10151E) else Color(0xFFECEAE4))
                     ) {
                         val widthPx = with(density) { maxWidth.toPx() }.coerceAtLeast(16f)
                         val heightPx = with(density) { maxHeight.toPx() }.coerceAtLeast(16f)
-                        val viewport = remember(centerLat, centerLng, zoomLevel) {
-                            MapProjection.computeViewportForCenter(
-                                centerLat = centerLat,
-                                centerLng = centerLng,
-                                zoom = zoomLevel
-                            )
-                        }
 
-                        MapTileBackground(
-                            viewport = viewport,
-                            widthPx = widthPx,
-                            heightPx = heightPx,
-                            darkTheme = darkTheme
-                        )
-
-                        Canvas(
+                        Box(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .pointerInput(viewport) {
-                                    detectTapGestures { tap ->
-                                        val w = size.width.toFloat().coerceAtLeast(1f)
-                                        val h = size.height.toFloat().coerceAtLeast(1f)
-                                        val (lat, lng) = MapProjection.unproject(tap.x, tap.y, viewport, w, h)
-                                        val ele = 18.0 + abs(sin((lat + lng) * 120.0)) * 65.0
-                                        trackPoints.add(TrackPoint(lat = lat, lng = lng, ele = ele, hr = 0))
+                                .clipToBounds()
+                                .mapTransformGestures(
+                                    gestureKey = Unit,
+                                    allowOneFingerPan = true
+                                ) { centroid, pan, zoom, rotation ->
+                                    if (rotation != 0f) {
+                                        bearingDeg = ((bearingDeg + rotation) % 360f)
                                     }
+                                    var next = activeViewport
+                                    if (zoom != 1f) {
+                                        next = MapProjection.zoomAroundFocus(
+                                            viewport = next,
+                                            focusX = centroid.x,
+                                            focusY = centroid.y,
+                                            widthPx = widthPx,
+                                            heightPx = heightPx,
+                                            zoomFactor = zoom,
+                                            bearingDeg = bearingDeg
+                                        )
+                                    }
+                                    if (pan != Offset.Zero) {
+                                        next = MapProjection.panViewport(next, pan.x, pan.y, bearingDeg)
+                                    }
+                                    activeViewport = next
                                 }
-                                .testTag("route_builder_canvas")
                         ) {
-                            val mapped = trackPoints.map { pt ->
-                                val (px, py) = MapProjection.project(pt.lat, pt.lng, viewport, size.width, size.height)
-                                Offset(px, py)
-                            }
-                            if (mapped.size >= 2) {
-                                val path = Path().apply {
-                                    moveTo(mapped.first().x, mapped.first().y)
-                                    for (i in 1 until mapped.size) {
-                                        lineTo(mapped[i].x, mapped[i].y)
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .graphicsLayer {
+                                        if (is3DView) {
+                                            rotationX = 32f
+                                            cameraDistance = 24f * density.density
+                                            scaleX = 1.16f
+                                            scaleY = 1.16f
+                                        }
+                                        rotationZ = bearingDeg
+                                    }
+                            ) {
+                                MapTileBackground(
+                                    viewport = activeViewport,
+                                    widthPx = widthPx,
+                                    heightPx = heightPx,
+                                    darkTheme = darkTheme,
+                                    layerType = selectedLayer
+                                )
+
+                                Canvas(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .pointerInput(activeViewport) {
+                                            detectTapGestures { tap ->
+                                                val w = size.width.toFloat().coerceAtLeast(1f)
+                                                val h = size.height.toFloat().coerceAtLeast(1f)
+                                                val (lat, lng) = MapProjection.unproject(tap.x, tap.y, activeViewport, w, h)
+                                                val ele = 18.0 + abs(sin((lat + lng) * 120.0)) * 65.0
+                                                trackPoints.add(TrackPoint(lat = lat, lng = lng, ele = ele, hr = 0))
+                                            }
+                                        }
+                                        .testTag("route_builder_canvas")
+                                ) {
+                                    val mapped = trackPoints.map { pt ->
+                                        val (px, py) = MapProjection.project(pt.lat, pt.lng, activeViewport, size.width, size.height)
+                                        Offset(px, py)
+                                    }
+                                    if (mapped.size >= 2) {
+                                        val path = Path().apply {
+                                            moveTo(mapped.first().x, mapped.first().y)
+                                            for (i in 1 until mapped.size) {
+                                                lineTo(mapped[i].x, mapped[i].y)
+                                            }
+                                        }
+                                        drawPath(
+                                            path,
+                                            Color.Black.copy(alpha = if (selectedLayer == MapLayerType.DARK) 0.45f else 0.25f),
+                                            style = Stroke(width = 12f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                                        )
+                                        drawPath(
+                                            path,
+                                            VeloOrange.copy(alpha = 0.28f),
+                                            style = Stroke(width = 16f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                                        )
+                                        drawPath(
+                                            path,
+                                            VeloOrange,
+                                            style = Stroke(width = 6f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                                        )
+                                    }
+                                    mapped.forEachIndexed { index, pt ->
+                                        val color = when {
+                                            index == 0 -> EmeraldPeak
+                                            index == mapped.lastIndex -> Color(0xFFEF4444)
+                                            else -> SignalCyan
+                                        }
+                                        drawCircle(color, radius = 10f, center = pt)
+                                        drawCircle(Color.White, radius = 4f, center = pt)
                                     }
                                 }
-                                drawPath(
-                                    path,
-                                    Color.Black.copy(alpha = if (darkTheme) 0.45f else 0.25f),
-                                    style = Stroke(width = 12f, cap = StrokeCap.Round, join = StrokeJoin.Round)
-                                )
-                                drawPath(
-                                    path,
-                                    VeloOrange.copy(alpha = 0.28f),
-                                    style = Stroke(width = 16f, cap = StrokeCap.Round, join = StrokeJoin.Round)
-                                )
-                                drawPath(
-                                    path,
-                                    VeloOrange,
-                                    style = Stroke(width = 6f, cap = StrokeCap.Round, join = StrokeJoin.Round)
-                                )
-                            }
-                            mapped.forEachIndexed { index, pt ->
-                                val color = when {
-                                    index == 0 -> EmeraldPeak
-                                    index == mapped.lastIndex -> Color(0xFFEF4444)
-                                    else -> SignalCyan
-                                }
-                                drawCircle(color, radius = 10f, center = pt)
-                                drawCircle(Color.White, radius = 4f, center = pt)
                             }
                         }
 
@@ -849,47 +929,36 @@ private fun InteractiveRouteBuilder(
                                 .padding(8.dp)
                         ) {
                             Text(
-                                text = "Zoom $zoomLevel",
+                                text = "Zoom ${activeViewport.zoom}",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurface,
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                             )
                         }
 
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        MapControlsOverlay(
+                            layerType = selectedLayer,
+                            onSelectLayer = { selectedLayer = it },
+                            is3DView = is3DView,
+                            onToggle3D = { is3DView = !is3DView },
+                            bearingDeg = bearingDeg,
+                            onResetNorth = { bearingDeg = 0f },
+                            onZoomIn = { activeViewport = MapProjection.zoomViewport(activeViewport, 1.45f) },
+                            onZoomOut = { activeViewport = MapProjection.zoomViewport(activeViewport, 0.70f) },
+                            isTransformed = isTransformed,
+                            onResetView = {
+                                activeViewport = baseViewport
+                                bearingDeg = 0f
+                            },
+                            testTagPrefix = "builder_map",
                             modifier = Modifier
                                 .align(Alignment.TopEnd)
                                 .padding(8.dp)
-                        ) {
-                            Surface(
-                                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.88f),
-                                shape = RoundedCornerShape(10.dp)
-                            ) {
-                                IconButton(
-                                    onClick = { zoomLevel = (zoomLevel - 1).coerceAtLeast(11) },
-                                    enabled = zoomLevel > 11,
-                                    modifier = Modifier.testTag("route_builder_zoom_out_btn")
-                                ) {
-                                    Icon(Icons.Rounded.Remove, contentDescription = "Zoom out map")
-                                }
-                            }
-                            Surface(
-                                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.88f),
-                                shape = RoundedCornerShape(10.dp)
-                            ) {
-                                IconButton(
-                                    onClick = { zoomLevel = (zoomLevel + 1).coerceAtMost(17) },
-                                    enabled = zoomLevel < 17,
-                                    modifier = Modifier.testTag("route_builder_zoom_in_btn")
-                                ) {
-                                    Icon(Icons.Rounded.Add, contentDescription = "Zoom in map")
-                                }
-                            }
-                        }
+                        )
 
                         MapAttributionBadge(
                             darkTheme = darkTheme,
+                            layerType = selectedLayer,
                             modifier = Modifier
                                 .align(Alignment.BottomEnd)
                                 .padding(8.dp)
@@ -965,53 +1034,66 @@ private fun InteractiveRouteBuilder(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun PersonalHeatmapView(workouts: List<WorkoutActivity>) {
+private fun PersonalHeatmapView(
+    workouts: List<WorkoutActivity>,
+    isRefreshing: Boolean,
+    onRefresh: () -> Unit,
+) {
     val allTracks = remember(workouts) {
         workouts.map { it.decodedPoints }.filter { it.size >= 2 }
     }
     val allPoints = remember(allTracks) { allTracks.flatten() }
     val totalKm = workouts.sumOf { it.distanceMeters } / 1000.0
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+    PullToRefreshBox(
+        isRefreshing = isRefreshing,
+        onRefresh = onRefresh,
+        modifier = Modifier
+            .fillMaxSize()
+            .testTag("maps_heatmap_pull_refresh")
     ) {
-        item {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                shape = RoundedCornerShape(18.dp)
-            ) {
-                Column(Modifier.padding(16.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Rounded.LocalFireDepartment, contentDescription = null, tint = VeloOrange)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Personal Activity Heatmap", style = MaterialTheme.typography.titleLarge)
-                    }
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        text = "Visualizes cumulative GPS track density across all ${workouts.size} recorded activities.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.height(12.dp))
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            item {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    shape = RoundedCornerShape(18.dp)
+                ) {
+                    Column(Modifier.padding(16.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Rounded.LocalFireDepartment, contentDescription = null, tint = VeloOrange)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Personal Activity Heatmap", style = MaterialTheme.typography.titleLarge)
+                        }
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = "Visualizes cumulative GPS track density across all ${workouts.size} recorded activities.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(12.dp))
 
-                    MultiTrackMapCanvas(
-                        tracks = allTracks,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(280.dp)
-                    )
+                        MultiTrackMapCanvas(
+                            tracks = allTracks,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(290.dp)
+                        )
 
-                    Spacer(Modifier.height(12.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        MetricCell("GPS Tracks", "${allTracks.size}")
-                        MetricCell("Cumulative Dist", "${String.format("%.1f", totalKm)} km", valueColor = VeloOrange)
-                        MetricCell("Track Points", "${allPoints.size}")
+                        Spacer(Modifier.height(12.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            MetricCell("GPS Tracks", "${allTracks.size}")
+                            MetricCell("Cumulative Dist", "${String.format("%.1f", totalKm)} km", valueColor = VeloOrange)
+                            MetricCell("Track Points", "${allPoints.size}")
+                        }
                     }
                 }
             }
@@ -1019,17 +1101,27 @@ private fun PersonalHeatmapView(workouts: List<WorkoutActivity>) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SegmentsLeaderboardView(
     segments: List<SegmentRecord>,
+    isRefreshing: Boolean,
+    onRefresh: () -> Unit,
     onToggleStar: (SegmentRecord) -> Unit,
     onOpenAddSegment: () -> Unit,
 ) {
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+    PullToRefreshBox(
+        isRefreshing = isRefreshing,
+        onRefresh = onRefresh,
+        modifier = Modifier
+            .fillMaxSize()
+            .testTag("maps_segments_pull_refresh")
     ) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1147,6 +1239,7 @@ private fun SegmentsLeaderboardView(
                 }
             }
         }
+    }
     }
 }
 

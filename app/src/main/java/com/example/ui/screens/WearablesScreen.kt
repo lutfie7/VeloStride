@@ -1,5 +1,7 @@
 package com.example.ui.screens
 
+import android.bluetooth.BluetoothAdapter
+import android.content.Intent
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -39,6 +41,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -46,6 +49,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -76,7 +80,7 @@ import com.example.ui.theme.JetBrainsMonoFontFamily
 import com.example.ui.theme.SignalCyan
 import com.example.ui.theme.VeloOrange
 
-@OptIn(ExperimentalLayoutApi::class)
+@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun WearablesScreen(viewModel: MainViewModel) {
     val ble by viewModel.bleState.collectAsStateWithLifecycle()
@@ -84,6 +88,7 @@ fun WearablesScreen(viewModel: MainViewModel) {
     val devicesState by viewModel.devicesState.collectAsStateWithLifecycle()
     val healthLogsState by viewModel.healthLogsState.collectAsStateWithLifecycle()
     val isBandSyncing by viewModel.isBandSyncing.collectAsStateWithLifecycle()
+    val isRefreshing by viewModel.isRefreshing.collectAsStateWithLifecycle()
 
     val savedDevices = (devicesState as? UiState.Success)?.data.orEmpty()
     val latestLog = (healthLogsState as? UiState.Success)?.data?.firstOrNull()
@@ -91,6 +96,15 @@ fun WearablesScreen(viewModel: MainViewModel) {
     val blePerms = remember { HuaweiBleManager.requiredPermissions() }
     val blePermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) {
+        viewModel.bleManager.refreshAdapterState()
+        if (viewModel.bleManager.hasBlePermissions()) {
+            viewModel.bleManager.startScan()
+        }
+    }
+
+    val enableBluetoothLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
     ) {
         viewModel.bleManager.refreshAdapterState()
         if (viewModel.bleManager.hasBlePermissions()) {
@@ -106,11 +120,18 @@ fun WearablesScreen(viewModel: MainViewModel) {
         }
     } else null
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+    PullToRefreshBox(
+        isRefreshing = isRefreshing,
+        onRefresh = { viewModel.refreshAllData() },
+        modifier = Modifier
+            .fillMaxSize()
+            .testTag("wearables_pull_refresh")
     ) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
         // 1. Native HUAWEI Band 11 Pro Pairing Hero
         item {
             Card(
@@ -229,15 +250,42 @@ fun WearablesScreen(viewModel: MainViewModel) {
                         )
                     }
 
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Show All BLE Peripherals", style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                "Include wearables that hide advertised name",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = ble.showAllBleDevices,
+                            onCheckedChange = { viewModel.bleManager.setShowAllBleDevices(it) },
+                            modifier = Modifier.testTag("ble_show_all_switch")
+                        )
+                    }
+
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                         Button(
                             onClick = {
-                                if (!viewModel.bleManager.hasBlePermissions()) {
-                                    blePermissionLauncher.launch(blePerms)
-                                } else if (ble.isScanning) {
-                                    viewModel.bleManager.stopScan()
-                                } else {
-                                    viewModel.bleManager.startScan()
+                                when {
+                                    !viewModel.bleManager.hasBlePermissions() -> {
+                                        blePermissionLauncher.launch(blePerms)
+                                    }
+                                    ble.status == BleConnectionStatus.BLUETOOTH_OFF -> {
+                                        enableBluetoothLauncher.launch(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE))
+                                    }
+                                    ble.isScanning -> {
+                                        viewModel.bleManager.stopScan()
+                                    }
+                                    else -> {
+                                        viewModel.bleManager.startScan()
+                                    }
                                 }
                             },
                             modifier = Modifier
@@ -245,18 +293,26 @@ fun WearablesScreen(viewModel: MainViewModel) {
                                 .height(48.dp)
                                 .testTag("ble_scan_btn")
                         ) {
-                            if (ble.isScanning) {
-                                CircularProgressIndicator(
-                                    Modifier.size(16.dp),
-                                    color = MaterialTheme.colorScheme.onPrimary,
-                                    strokeWidth = 2.dp
-                                )
-                                Spacer(Modifier.width(8.dp))
-                                Text("Stop Scan")
-                            } else {
-                                Icon(Icons.AutoMirrored.Rounded.BluetoothSearching, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(Modifier.width(6.dp))
-                                Text(if (viewModel.bleManager.hasBlePermissions()) "Scan BLE Sensors" else "Grant BLE & Scan")
+                            when {
+                                ble.isScanning -> {
+                                    CircularProgressIndicator(
+                                        Modifier.size(16.dp),
+                                        color = MaterialTheme.colorScheme.onPrimary,
+                                        strokeWidth = 2.dp
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    Text("Stop Scan")
+                                }
+                                ble.status == BleConnectionStatus.BLUETOOTH_OFF -> {
+                                    Icon(Icons.Rounded.Bluetooth, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Enable Bluetooth")
+                                }
+                                else -> {
+                                    Icon(Icons.AutoMirrored.Rounded.BluetoothSearching, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(if (viewModel.bleManager.hasBlePermissions()) "Scan BLE Sensors" else "Grant BLE & Scan")
+                                }
                             }
                         }
 
@@ -394,6 +450,18 @@ fun WearablesScreen(viewModel: MainViewModel) {
                                         )
                                     }
                                 }
+                                if (dev.isBonded) {
+                                    Spacer(Modifier.width(6.dp))
+                                    Surface(color = EmeraldPeak.copy(alpha = 0.18f), shape = RoundedCornerShape(6.dp)) {
+                                        Text(
+                                            "BONDED",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = EmeraldPeak,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
                             }
                             Text(
                                 text = "${dev.macAddress} • ${dev.rssi} dBm • ${dev.manufacturerName}",
@@ -401,11 +469,28 @@ fun WearablesScreen(viewModel: MainViewModel) {
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
+                        val isThisTarget = ble.connectedMacAddress == dev.macAddress
+                        val isConnectingThis = isThisTarget && ble.status == BleConnectionStatus.CONNECTING
+                        val isConnectedThis = isThisTarget && ble.status == BleConnectionStatus.CONNECTED
                         Button(
-                            onClick = { viewModel.bleManager.connectToDevice(dev.macAddress, dev.isHuaweiDevice) },
+                            enabled = !isConnectingThis,
+                            onClick = {
+                                if (isConnectedThis) {
+                                    viewModel.bleManager.disconnect()
+                                } else {
+                                    viewModel.bleManager.connectToDevice(dev.macAddress, dev.isHuaweiDevice)
+                                }
+                            },
                             modifier = Modifier.testTag("connect_ble_${dev.macAddress}")
                         ) {
-                            Text("Pair")
+                            Text(
+                                when {
+                                    isConnectedThis -> "Live"
+                                    isConnectingThis -> "Pairing..."
+                                    dev.isBonded -> "Connect"
+                                    else -> "Pair"
+                                }
+                            )
                         }
                     }
                 }
@@ -566,5 +651,6 @@ fun WearablesScreen(viewModel: MainViewModel) {
                 }
             }
         }
+    }
     }
 }

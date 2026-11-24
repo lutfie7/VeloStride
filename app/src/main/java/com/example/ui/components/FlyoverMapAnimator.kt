@@ -2,6 +2,7 @@ package com.example.ui.components
 
 import android.annotation.SuppressLint
 import android.os.Build
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
@@ -11,17 +12,20 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredSize
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -29,18 +33,22 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.AspectRatio
 import androidx.compose.material.icons.rounded.CameraAlt
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Explore
+import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material.icons.rounded.Movie
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Replay
 import androidx.compose.material.icons.rounded.Share
+import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.Videocam
 import androidx.compose.material.icons.rounded.ZoomOutMap
 import androidx.compose.material3.Button
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
@@ -48,10 +56,12 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -64,6 +74,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -82,8 +93,10 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.core.FlyoverCameraMode
+import com.example.core.FlyoverDisplayConfig
 import com.example.core.FlyoverVideoExporter
 import com.example.core.Formatters
+import com.example.core.MapLayerType
 import com.example.core.MapProjection
 import com.example.core.ShareCardRatio
 import com.example.data.model.WorkoutActivity
@@ -156,6 +169,10 @@ fun FlyoverMapAnimator(
     var isPlaying by remember(workout.id) { mutableStateOf(true) }
     var speedMultiplier by remember { mutableFloatStateOf(2f) }
     var cameraMode by remember { mutableStateOf(FlyoverCameraMode.FOLLOW_3D) }
+    var layerType by remember(darkTheme) {
+        mutableStateOf(if (darkTheme) MapLayerType.DARK else MapLayerType.STANDARD)
+    }
+    var displayConfig by remember(workout.id) { mutableStateOf(FlyoverDisplayConfig()) }
 
     var isExportingVideo by remember { mutableStateOf(false) }
     var exportProgress by remember { mutableFloatStateOf(0f) }
@@ -183,7 +200,7 @@ fun FlyoverMapAnimator(
     }
 
     suspend fun ensureExportedMp4(): File {
-        val key = "${workout.id}_${activeRatio.name}_${cameraMode.name}_${speedMultiplier}_$darkTheme"
+        val key = "${workout.id}_${activeRatio.name}_${cameraMode.name}_${speedMultiplier}_${layerType.name}_${displayConfig.hashCode()}_$darkTheme"
         val existing = cachedVideoFile
         if (cachedVideoKey == key && existing != null && existing.exists() && existing.length() > 0L) {
             return existing
@@ -195,6 +212,8 @@ fun FlyoverMapAnimator(
             cameraMode = cameraMode,
             speedMultiplier = speedMultiplier,
             darkTheme = darkTheme,
+            displayConfig = displayConfig,
+            layerType = layerType,
             onProgress = { p, msg ->
                 exportProgress = p
                 exportStatus = msg
@@ -309,6 +328,88 @@ fun FlyoverMapAnimator(
             }
         }
 
+        // Map Layer Bar (Standard, Dark, Terrain, Cycling)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.Layers,
+                contentDescription = null,
+                tint = SignalCyan,
+                modifier = Modifier.size(16.dp)
+            )
+            MapLayerType.entries.forEach { layer ->
+                FilterChip(
+                    selected = layerType == layer,
+                    onClick = { layerType = layer },
+                    label = { Text(layer.label, maxLines = 1) },
+                    modifier = Modifier.testTag("flyover_layer_${layer.name.lowercase()}")
+                )
+            }
+        }
+
+        // Data Display Toggles Bar (show/hide telemetry overlays on Flyover & exported MP4)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.Tune,
+                contentDescription = null,
+                tint = VeloOrange,
+                modifier = Modifier.size(16.dp)
+            )
+            FilterChip(
+                selected = displayConfig.showDistance,
+                onClick = { displayConfig = displayConfig.copy(showDistance = !displayConfig.showDistance) },
+                label = { Text("Jarak", maxLines = 1) },
+                modifier = Modifier.testTag("flyover_toggle_distance")
+            )
+            FilterChip(
+                selected = displayConfig.showDuration,
+                onClick = { displayConfig = displayConfig.copy(showDuration = !displayConfig.showDuration) },
+                label = { Text("Waktu", maxLines = 1) },
+                modifier = Modifier.testTag("flyover_toggle_duration")
+            )
+            FilterChip(
+                selected = displayConfig.showElevation,
+                onClick = { displayConfig = displayConfig.copy(showElevation = !displayConfig.showElevation) },
+                label = { Text("Elevasi", maxLines = 1) },
+                modifier = Modifier.testTag("flyover_toggle_elevation")
+            )
+            FilterChip(
+                selected = displayConfig.showPaceOrSpeed,
+                onClick = { displayConfig = displayConfig.copy(showPaceOrSpeed = !displayConfig.showPaceOrSpeed) },
+                label = { Text(if (workout.parsedSport.isPaceBased) "Pace" else "Speed", maxLines = 1) },
+                modifier = Modifier.testTag("flyover_toggle_pace")
+            )
+            FilterChip(
+                selected = displayConfig.showHeartRate,
+                onClick = { displayConfig = displayConfig.copy(showHeartRate = !displayConfig.showHeartRate) },
+                label = { Text("HR", maxLines = 1) },
+                modifier = Modifier.testTag("flyover_toggle_hr")
+            )
+            FilterChip(
+                selected = displayConfig.showElevationProfile,
+                onClick = { displayConfig = displayConfig.copy(showElevationProfile = !displayConfig.showElevationProfile) },
+                label = { Text("Grafik", maxLines = 1) },
+                modifier = Modifier.testTag("flyover_toggle_profile")
+            )
+            FilterChip(
+                selected = displayConfig.showBrandBadge,
+                onClick = { displayConfig = displayConfig.copy(showBrandBadge = !displayConfig.showBrandBadge) },
+                label = { Text("Badge", maxLines = 1) },
+                modifier = Modifier.testTag("flyover_toggle_badge")
+            )
+        }
+
         // Animated Map Stage sized to the chosen aspect ratio (1:1, 16:9, 9:16)
         val stageHeight = when (activeRatio) {
             ShareCardRatio.LANDSCAPE_16_9 -> 200.dp
@@ -336,7 +437,8 @@ fun FlyoverMapAnimator(
             BoxWithConstraints(
                 modifier = frameSizeModifier
                     .clip(RoundedCornerShape(16.dp))
-                    .background(if (darkTheme) Color(0xFF0E131B) else Color(0xFFECEAE4))
+                    .clipToBounds()
+                    .background(if (layerType == MapLayerType.DARK || darkTheme) Color(0xFF0E131B) else Color(0xFFECEAE4))
             ) {
                 val widthPx = with(density) { maxWidth.toPx() }.coerceAtLeast(16f)
                 val heightPx = with(density) { maxHeight.toPx() }.coerceAtLeast(16f)
@@ -354,7 +456,7 @@ fun FlyoverMapAnimator(
                     null
                 }
 
-                val projW = if (isCinematic) hypot(widthPx, heightPx) * 1.25f else widthPx
+                val projW = if (isCinematic) (maxOf(widthPx, heightPx) * 1.15f).coerceIn(64f, 1280f) else widthPx
                 val projH = if (isCinematic) projW else heightPx
                 val projWDp = with(density) { projW.toDp() }
                 val projHDp = with(density) { projH.toDp() }
@@ -372,14 +474,17 @@ fun FlyoverMapAnimator(
                         centerLat = currentSample.lat,
                         centerLng = currentSample.lng,
                         zoom = followZoom,
-                        tileSizePx = 320.0
+                        tileSizePx = 300.0
                     )
-                    FlyoverCameraMode.CINEMATIC_3D -> MapProjection.computeViewportForCenter(
-                        centerLat = cinematicPose!!.lookAtLat,
-                        centerLng = cinematicPose.lookAtLng,
-                        zoom = followZoom,
-                        tileSizePx = 380.0
-                    )
+                    FlyoverCameraMode.CINEMATIC_3D -> {
+                        val pose = cinematicPose!!
+                        MapProjection.computeViewportForCenter(
+                            centerLat = pose.lookAtLat,
+                            centerLng = pose.lookAtLng,
+                            zoom = followZoom,
+                            tileSizePx = 300.0
+                        )
+                    }
                     FlyoverCameraMode.FULL_ROUTE -> overviewViewport
                 }
 
@@ -402,21 +507,25 @@ fun FlyoverMapAnimator(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier
                         .fillMaxSize()
+                        .clipToBounds()
                         .graphicsLayer {
                             when (cameraMode) {
                                 FlyoverCameraMode.FOLLOW_3D -> {
                                     rotationX = 24f
-                                    cameraDistance = 14f * density.density
-                                    scaleX = 1.22f
-                                    scaleY = 1.22f
+                                    cameraDistance = 24f * density.density
+                                    scaleX = 1.20f
+                                    scaleY = 1.20f
                                 }
                                 FlyoverCameraMode.CINEMATIC_3D -> {
                                     val pose = cinematicPose!!
-                                    rotationX = pose.pitchDeg
-                                    cameraDistance = 11f * density.density
-                                    scaleX = pose.zoomScale
-                                    scaleY = pose.zoomScale
-                                    translationY = heightPx * pose.translationYFraction
+                                    val safePitch = pose.pitchDeg.takeIf { it.isFinite() }?.coerceIn(20f, 42f) ?: 34f
+                                    val safeScale = pose.zoomScale.takeIf { it.isFinite() }?.coerceIn(1.0f, 1.5f) ?: 1.22f
+                                    val safeTy = (heightPx * pose.translationYFraction).takeIf { it.isFinite() } ?: 0f
+                                    rotationX = safePitch
+                                    cameraDistance = 24f * density.density
+                                    scaleX = safeScale
+                                    scaleY = safeScale
+                                    translationY = safeTy
                                 }
                                 FlyoverCameraMode.FULL_ROUTE -> Unit
                             }
@@ -427,7 +536,8 @@ fun FlyoverMapAnimator(
                             .requiredSize(projWDp, projHDp)
                             .graphicsLayer {
                                 if (isCinematic) {
-                                    rotationZ = cinematicPose!!.rotationZDeg
+                                    val safeRot = cinematicPose?.rotationZDeg?.takeIf { it.isFinite() } ?: 0f
+                                    rotationZ = safeRot
                                 }
                             }
                     ) {
@@ -435,31 +545,36 @@ fun FlyoverMapAnimator(
                             viewport = activeViewport,
                             widthPx = projW,
                             heightPx = projH,
-                            darkTheme = darkTheme
+                            darkTheme = darkTheme,
+                            layerType = layerType,
+                            enableCrossfade = false
                         )
 
                         Canvas(modifier = Modifier.fillMaxSize()) {
+                            if (points.isEmpty() || size.width <= 1f || size.height <= 1f) return@Canvas
                             val minEle = points.minOf { it.ele }
                             val maxEle = points.maxOf { it.ele }
                             val eleSpan = (maxEle - minEle).coerceAtLeast(1.0)
                             val hasRelief = isCinematic && (maxEle - minEle) >= 3.0
-                            val maxLiftPx = if (hasRelief) 28f else 0f
-                            val rotRad = if (isCinematic) {
-                                Math.toRadians(cinematicPose!!.rotationZDeg.toDouble())
-                            } else 0.0
+                            val maxLiftPx = if (hasRelief) 26f else 0f
+                            val rotDeg = cinematicPose?.rotationZDeg?.takeIf { it.isFinite() } ?: 0f
+                            val rotRad = if (isCinematic) Math.toRadians(rotDeg.toDouble()) else 0.0
                             val upX = (-sin(rotRad)).toFloat()
                             val upY = (-cos(rotRad)).toFloat()
 
                             val groundPts = ArrayList<Offset>(points.size)
                             val liftedPts = ArrayList<Offset>(points.size)
                             for (pt in points) {
-                                val (px, py) = MapProjection.project(pt.lat, pt.lng, activeViewport, size.width, size.height)
+                                val (pxRaw, pyRaw) = MapProjection.project(pt.lat, pt.lng, activeViewport, size.width, size.height)
+                                val px = pxRaw.takeIf { it.isFinite() } ?: (size.width / 2f)
+                                val py = pyRaw.takeIf { it.isFinite() } ?: (size.height / 2f)
                                 groundPts.add(Offset(px, py))
                                 val lift = if (hasRelief) {
                                     (((pt.ele - minEle) / eleSpan).toFloat().coerceIn(0f, 1f)) * maxLiftPx
                                 } else 0f
                                 liftedPts.add(Offset(px + upX * lift, py + upY * lift))
                             }
+                            if (liftedPts.isEmpty()) return@Canvas
 
                             if (isCinematic) {
                                 val shadowPath = Path().apply {
@@ -498,13 +613,15 @@ fun FlyoverMapAnimator(
                                 style = Stroke(width = 6f, cap = StrokeCap.Round, join = StrokeJoin.Round)
                             )
 
-                            val (headGX, headGY) = MapProjection.project(
+                            val (headGXRaw, headGYRaw) = MapProjection.project(
                                 currentSample.lat,
                                 currentSample.lng,
                                 activeViewport,
                                 size.width,
                                 size.height
                             )
+                            val headGX = headGXRaw.takeIf { it.isFinite() } ?: liftedPts.first().x
+                            val headGY = headGYRaw.takeIf { it.isFinite() } ?: liftedPts.first().y
                             val headLift = if (hasRelief) {
                                 (((currentSample.ele - minEle) / eleSpan).toFloat().coerceIn(0f, 1f)) * maxLiftPx
                             } else 0f
@@ -547,20 +664,22 @@ fun FlyoverMapAnimator(
                                     cumulativeDistances,
                                     (progress + 0.025f).coerceIn(0f, 1f)
                                 )
-                                val (aGX, aGY) = MapProjection.project(
+                                val (aGXRaw, aGYRaw) = MapProjection.project(
                                     aheadSample.lat,
                                     aheadSample.lng,
                                     activeViewport,
                                     size.width,
                                     size.height
                                 )
+                                val aGX = aGXRaw.takeIf { it.isFinite() } ?: headGX
+                                val aGY = aGYRaw.takeIf { it.isFinite() } ?: headGY
                                 val aLift = if (hasRelief) {
                                     (((aheadSample.ele - minEle) / eleSpan).toFloat().coerceIn(0f, 1f)) * maxLiftPx
                                 } else 0f
                                 val dx = (aGX + upX * aLift) - headOffset.x
                                 val dy = (aGY + upY * aLift) - headOffset.y
                                 val len = hypot(dx, dy)
-                                if (len > 2f) {
+                                if (len.isFinite() && len > 2f) {
                                     drawLine(
                                         color = SignalCyan.copy(alpha = 0.65f),
                                         start = headOffset,
@@ -602,6 +721,9 @@ fun FlyoverMapAnimator(
                                 )
                             )
                     )
+                }
+
+                if (displayConfig.showBrandBadge) {
                     Surface(
                         color = Color(0xB30D121A),
                         shape = RoundedCornerShape(6.dp),
@@ -610,70 +732,106 @@ fun FlyoverMapAnimator(
                             .padding(6.dp)
                     ) {
                         Text(
-                            text = "CINEMATIC 3D",
+                            text = if (isCinematic) "VELOSTRIDE • CINEMATIC 3D" else "VELOSTRIDE",
                             fontSize = 8.sp,
                             fontWeight = FontWeight.Bold,
                             letterSpacing = 0.8.sp,
-                            color = SignalCyan,
+                            color = if (isCinematic) SignalCyan else VeloOrange,
                             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                         )
                     }
                 }
 
-                // Compact Live Telemetry Pill HUD (stays legible even inside 9:16 frame)
+                // Compact Live Telemetry Pill HUD (controlled by FlyoverDisplayConfig toggles)
                 val compactHud = activeRatio == ShareCardRatio.PORTRAIT_9_16
-                Surface(
-                    color = Color(0xCC0D121A),
-                    shape = RoundedCornerShape(10.dp),
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(8.dp)
-                ) {
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(if (compactHud) 7.dp else 11.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(horizontal = if (compactHud) 8.dp else 11.dp, vertical = 6.dp)
+                val hasAnyHudMetric = displayConfig.showDistance ||
+                    displayConfig.showDuration ||
+                    displayConfig.showElevation ||
+                    displayConfig.showPaceOrSpeed ||
+                    (displayConfig.showHeartRate && currentSample.hr > 0)
+
+                if (hasAnyHudMetric) {
+                    Surface(
+                        color = Color(0xCC0D121A),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .padding(8.dp)
+                            .testTag("flyover_hud_overlay")
                     ) {
-                        Column {
-                            Text("DIST", fontSize = 8.sp, color = Color(0xFF94A3B8), fontWeight = FontWeight.Bold)
-                            Text(
-                                text = String.format("%.2f", coveredKm) + if (compactHud) "" else " km",
-                                fontFamily = JetBrainsMonoFontFamily,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = if (compactHud) 11.sp else 13.sp,
-                                color = VeloOrange
-                            )
-                        }
-                        Column {
-                            Text("TIME", fontSize = 8.sp, color = Color(0xFF94A3B8), fontWeight = FontWeight.Bold)
-                            Text(
-                                text = Formatters.formatDuration(elapsedSec),
-                                fontFamily = JetBrainsMonoFontFamily,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = if (compactHud) 11.sp else 13.sp,
-                                color = Color.White
-                            )
-                        }
-                        Column {
-                            Text("ELEV", fontSize = 8.sp, color = Color(0xFF94A3B8), fontWeight = FontWeight.Bold)
-                            Text(
-                                text = "${currentSample.ele.roundToInt()}m",
-                                fontFamily = JetBrainsMonoFontFamily,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = if (compactHud) 11.sp else 13.sp,
-                                color = SignalCyan
-                            )
-                        }
-                        if (currentSample.hr > 0 && !compactHud) {
-                            Column {
-                                Text("HR", fontSize = 8.sp, color = Color(0xFF94A3B8), fontWeight = FontWeight.Bold)
-                                Text(
-                                    text = "${currentSample.hr}",
-                                    fontFamily = JetBrainsMonoFontFamily,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 13.sp,
-                                    color = CrimsonPulse
-                                )
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(if (compactHud) 7.dp else 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = if (compactHud) 8.dp else 11.dp, vertical = 6.dp)
+                        ) {
+                            if (displayConfig.showDistance) {
+                                Column {
+                                    Text("DIST", fontSize = 8.sp, color = Color(0xFF94A3B8), fontWeight = FontWeight.Bold)
+                                    Text(
+                                        text = String.format("%.2f", coveredKm) + if (compactHud) "" else " km",
+                                        fontFamily = JetBrainsMonoFontFamily,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = if (compactHud) 11.sp else 13.sp,
+                                        color = VeloOrange
+                                    )
+                                }
+                            }
+                            if (displayConfig.showDuration) {
+                                Column {
+                                    Text("TIME", fontSize = 8.sp, color = Color(0xFF94A3B8), fontWeight = FontWeight.Bold)
+                                    Text(
+                                        text = Formatters.formatDuration(elapsedSec),
+                                        fontFamily = JetBrainsMonoFontFamily,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = if (compactHud) 11.sp else 13.sp,
+                                        color = Color.White
+                                    )
+                                }
+                            }
+                            if (displayConfig.showElevation) {
+                                Column {
+                                    Text("ELEV", fontSize = 8.sp, color = Color(0xFF94A3B8), fontWeight = FontWeight.Bold)
+                                    Text(
+                                        text = "${currentSample.ele.roundToInt()}m",
+                                        fontFamily = JetBrainsMonoFontFamily,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = if (compactHud) 11.sp else 13.sp,
+                                        color = SignalCyan
+                                    )
+                                }
+                            }
+                            if (displayConfig.showPaceOrSpeed && !compactHud) {
+                                Column {
+                                    Text(
+                                        text = if (workout.parsedSport.isPaceBased) "PACE" else "SPD",
+                                        fontSize = 8.sp,
+                                        color = Color(0xFF94A3B8),
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        text = if (workout.parsedSport.isPaceBased) {
+                                            Formatters.formatPaceShort(workout.avgPaceSecPerKm)
+                                        } else {
+                                            String.format("%.1f", workout.avgSpeedKmh)
+                                        },
+                                        fontFamily = JetBrainsMonoFontFamily,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.sp,
+                                        color = EmeraldPeak
+                                    )
+                                }
+                            }
+                            if (displayConfig.showHeartRate && currentSample.hr > 0 && !compactHud) {
+                                Column {
+                                    Text("HR", fontSize = 8.sp, color = Color(0xFF94A3B8), fontWeight = FontWeight.Bold)
+                                    Text(
+                                        text = "${currentSample.hr}",
+                                        fontFamily = JetBrainsMonoFontFamily,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.sp,
+                                        color = CrimsonPulse
+                                    )
+                                }
                             }
                         }
                     }
@@ -681,6 +839,7 @@ fun FlyoverMapAnimator(
 
                 MapAttributionBadge(
                     darkTheme = darkTheme,
+                    layerType = layerType,
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
                         .padding(6.dp)
@@ -688,46 +847,49 @@ fun FlyoverMapAnimator(
             }
         }
 
-        // Synced Elevation Sparkline
-        Canvas(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(42.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
-        ) {
-            val minEle = points.minOf { it.ele }
-            val maxEle = points.maxOf { it.ele }
-            val span = (maxEle - minEle).coerceAtLeast(8.0)
+        // Synced Elevation Sparkline (controlled by FlyoverDisplayConfig.showElevationProfile)
+        if (displayConfig.showElevationProfile) {
+            Canvas(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(42.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
+                    .testTag("flyover_elevation_sparkline")
+            ) {
+                val minEle = points.minOf { it.ele }
+                val maxEle = points.maxOf { it.ele }
+                val span = (maxEle - minEle).coerceAtLeast(8.0)
 
-            val elePath = Path()
-            val fillPath = Path()
-            points.forEachIndexed { idx, pt ->
-                val x = (cumulativeDistances[idx] / totalTrackMeters).toFloat() * size.width
-                val y = size.height - 6f - ((pt.ele - minEle) / span).toFloat() * (size.height - 12f)
-                if (idx == 0) {
-                    elePath.moveTo(x, y)
-                    fillPath.moveTo(x, size.height)
-                    fillPath.lineTo(x, y)
-                } else {
-                    elePath.lineTo(x, y)
-                    fillPath.lineTo(x, y)
+                val elePath = Path()
+                val fillPath = Path()
+                points.forEachIndexed { idx, pt ->
+                    val x = (cumulativeDistances[idx] / totalTrackMeters).toFloat() * size.width
+                    val y = size.height - 6f - ((pt.ele - minEle) / span).toFloat() * (size.height - 12f)
+                    if (idx == 0) {
+                        elePath.moveTo(x, y)
+                        fillPath.moveTo(x, size.height)
+                        fillPath.lineTo(x, y)
+                    } else {
+                        elePath.lineTo(x, y)
+                        fillPath.lineTo(x, y)
+                    }
                 }
+                fillPath.lineTo(size.width, size.height)
+                fillPath.close()
+
+                drawPath(
+                    fillPath,
+                    Brush.verticalGradient(listOf(SignalCyan.copy(alpha = 0.30f), Color.Transparent))
+                )
+                drawPath(elePath, SignalCyan, style = Stroke(width = 3f, cap = StrokeCap.Round))
+
+                val cursorX = progress * size.width
+                drawLine(VeloOrange, Offset(cursorX, 0f), Offset(cursorX, size.height), strokeWidth = 3f)
+                val cursorY = size.height - 6f - ((currentSample.ele - minEle) / span).toFloat() * (size.height - 12f)
+                drawCircle(VeloOrange, radius = 6f, center = Offset(cursorX, cursorY))
+                drawCircle(Color.White, radius = 2.5f, center = Offset(cursorX, cursorY))
             }
-            fillPath.lineTo(size.width, size.height)
-            fillPath.close()
-
-            drawPath(
-                fillPath,
-                Brush.verticalGradient(listOf(SignalCyan.copy(alpha = 0.30f), Color.Transparent))
-            )
-            drawPath(elePath, SignalCyan, style = Stroke(width = 3f, cap = StrokeCap.Round))
-
-            val cursorX = progress * size.width
-            drawLine(VeloOrange, Offset(cursorX, 0f), Offset(cursorX, size.height), strokeWidth = 3f)
-            val cursorY = size.height - 6f - ((currentSample.ele - minEle) / span).toFloat() * (size.height - 12f)
-            drawCircle(VeloOrange, radius = 6f, center = Offset(cursorX, cursorY))
-            drawCircle(Color.White, radius = 2.5f, center = Offset(cursorX, cursorY))
         }
 
         // Scrubber + Playback Controls
@@ -906,6 +1068,7 @@ fun FlyoverMapAnimator(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FlyoverMapDialog(
     workout: WorkoutActivity,
@@ -914,53 +1077,63 @@ fun FlyoverMapDialog(
 ) {
     Dialog(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false
+        )
     ) {
+        BackHandler(onBack = onDismiss)
         Surface(
-            shape = RoundedCornerShape(22.dp),
-            color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 6.dp,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 20.dp)
-                .widthIn(max = 560.dp)
-                .heightIn(max = 780.dp)
+            color = MaterialTheme.colorScheme.background,
+            modifier = Modifier.fillMaxSize()
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
-                    .padding(16.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Flyover Map Animator",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = workout.title,
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    IconButton(
-                        onClick = onDismiss,
-                        modifier = Modifier.testTag("close_flyover_dialog_btn")
-                    ) {
-                        Icon(Icons.Rounded.Close, contentDescription = "Close Flyover")
-                    }
+            Scaffold(
+                contentWindowInsets = WindowInsets.safeDrawing,
+                topBar = {
+                    TopAppBar(
+                        title = {
+                            Column {
+                                Text(
+                                    text = "Flyover Map Animator",
+                                    style = MaterialTheme.typography.titleLarge,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1
+                                )
+                                Text(
+                                    text = workout.title,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1
+                                )
+                            }
+                        },
+                        navigationIcon = {
+                            IconButton(
+                                onClick = onDismiss,
+                                modifier = Modifier.testTag("close_flyover_dialog_btn")
+                            ) {
+                                Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Close Flyover")
+                            }
+                        }
+                    )
                 }
-                Spacer(Modifier.height(10.dp))
-                FlyoverMapAnimator(
-                    workout = workout,
-                    onShareSnapshot = onShareFrame
-                )
+            ) { innerPadding ->
+                Box(
+                    contentAlignment = Alignment.TopCenter,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(innerPadding)
+                ) {
+                    FlyoverMapAnimator(
+                        workout = workout,
+                        onShareSnapshot = onShareFrame,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .widthIn(max = 600.dp)
+                            .verticalScroll(rememberScrollState())
+                            .padding(16.dp)
+                    )
+                }
             }
         }
     }

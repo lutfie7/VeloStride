@@ -7,8 +7,23 @@ import kotlin.math.cos
 import kotlin.math.floor
 import kotlin.math.ln
 import kotlin.math.log2
+import kotlin.math.sin
 import kotlin.math.sinh
 import kotlin.math.tan
+
+enum class MapLayerType(val label: String) {
+    STANDARD("Standard"),
+    DARK("Dark"),
+    TOPO("Terrain"),
+    CYCLING("Cycling");
+
+    val attributionText: String
+        get() = when (this) {
+            TOPO -> "© OpenTopoMap / OSM"
+            CYCLING -> "© CyclOSM / OSM"
+            else -> "© OpenStreetMap"
+        }
+}
 
 data class MapViewport(
     val centerWX: Double,
@@ -107,6 +122,67 @@ object MapProjection {
         )
     }
 
+    fun panViewport(
+        viewport: MapViewport,
+        deltaXPx: Float,
+        deltaYPx: Float,
+        bearingDeg: Float = 0f,
+    ): MapViewport {
+        if (!deltaXPx.isFinite() || !deltaYPx.isFinite() || viewport.scalePx <= 0.0) return viewport
+        val rad = Math.toRadians(-bearingDeg.toDouble())
+        val cosR = cos(rad)
+        val sinR = sin(rad)
+        val worldDx = deltaXPx * cosR - deltaYPx * sinR
+        val worldDy = deltaXPx * sinR + deltaYPx * cosR
+        return viewport.copy(
+            centerWX = (viewport.centerWX - worldDx / viewport.scalePx).coerceIn(0.0, 1.0),
+            centerWY = (viewport.centerWY - worldDy / viewport.scalePx).coerceIn(0.0, 1.0)
+        )
+    }
+
+    fun zoomViewport(
+        viewport: MapViewport,
+        zoomFactor: Float,
+        minZoom: Int = 2,
+        maxZoom: Int = 18,
+    ): MapViewport {
+        if (!zoomFactor.isFinite() || zoomFactor <= 0f) return viewport
+        val minScale = (1 shl minZoom) * TILE_BASE_PX
+        val maxScale = (1 shl maxZoom) * TILE_BASE_PX * 1.5
+        val newScale = (viewport.scalePx * zoomFactor.toDouble()).coerceIn(minScale, maxScale)
+        val newZoom = floor(log2(newScale / TILE_BASE_PX)).toInt().coerceIn(minZoom, maxZoom)
+        return viewport.copy(scalePx = newScale, zoom = newZoom)
+    }
+
+    fun zoomAroundFocus(
+        viewport: MapViewport,
+        focusX: Float,
+        focusY: Float,
+        widthPx: Float,
+        heightPx: Float,
+        zoomFactor: Float,
+        bearingDeg: Float = 0f,
+        minZoom: Int = 2,
+        maxZoom: Int = 18,
+    ): MapViewport {
+        if (!zoomFactor.isFinite() || zoomFactor <= 0f || widthPx <= 0f || heightPx <= 0f) return viewport
+        val dxScreen = focusX - widthPx / 2f
+        val dyScreen = focusY - heightPx / 2f
+        val rad = Math.toRadians(-bearingDeg.toDouble())
+        val cosR = cos(rad)
+        val sinR = sin(rad)
+        val dxWorldPx = dxScreen * cosR - dyScreen * sinR
+        val dyWorldPx = dxScreen * sinR + dyScreen * cosR
+
+        val focusWX = viewport.centerWX + dxWorldPx / viewport.scalePx
+        val focusWY = viewport.centerWY + dyWorldPx / viewport.scalePx
+
+        val zoomed = zoomViewport(viewport, zoomFactor, minZoom, maxZoom)
+        val newCenterWX = (focusWX - dxWorldPx / zoomed.scalePx).coerceIn(0.0, 1.0)
+        val newCenterWY = (focusWY - dyWorldPx / zoomed.scalePx).coerceIn(0.0, 1.0)
+        return zoomed.copy(centerWX = newCenterWX, centerWY = newCenterWY)
+    }
+
     fun project(
         lat: Double,
         lng: Double,
@@ -127,9 +203,17 @@ object MapProjection {
         viewport: MapViewport,
         widthPx: Float,
         heightPx: Float,
+        bearingDeg: Float = 0f,
     ): Pair<Double, Double> {
-        val wx = viewport.centerWX + (xPx - widthPx / 2f) / viewport.scalePx
-        val wy = viewport.centerWY + (yPx - heightPx / 2f) / viewport.scalePx
+        val dxScreen = xPx - widthPx / 2f
+        val dyScreen = yPx - heightPx / 2f
+        val rad = Math.toRadians(-bearingDeg.toDouble())
+        val cosR = cos(rad)
+        val sinR = sin(rad)
+        val dxWorld = dxScreen * cosR - dyScreen * sinR
+        val dyWorld = dxScreen * sinR + dyScreen * cosR
+        val wx = viewport.centerWX + dxWorld / viewport.scalePx
+        val wy = viewport.centerWY + dyWorld / viewport.scalePx
         return worldYToLat(wy) to worldXToLng(wx)
     }
 
@@ -137,17 +221,24 @@ object MapProjection {
     fun tileUrl(x: Int, y: Int, zoom: Int, darkTheme: Boolean = false): String =
         "https://tile.openstreetmap.org/$zoom/$x/$y.png"
 
+    fun tileUrl(x: Int, y: Int, zoom: Int, layerType: MapLayerType): String = when (layerType) {
+        MapLayerType.STANDARD, MapLayerType.DARK -> "https://tile.openstreetmap.org/$zoom/$x/$y.png"
+        MapLayerType.TOPO -> "https://tile.opentopomap.org/$zoom/$x/$y.png"
+        MapLayerType.CYCLING -> "https://a.tile-cyclosm.openstreetmap.fr/cyclosm/$zoom/$x/$y.png"
+    }
+
     fun visibleTiles(
         viewport: MapViewport,
         widthPx: Float,
         heightPx: Float,
         darkTheme: Boolean,
+        layerType: MapLayerType = if (darkTheme) MapLayerType.DARK else MapLayerType.STANDARD,
     ): List<MapTileSpec> {
-        if (widthPx <= 0f || heightPx <= 0f) return emptyList()
+        if (widthPx <= 0f || heightPx <= 0f || !viewport.scalePx.isFinite() || viewport.scalePx <= 0.0) return emptyList()
         val z = viewport.zoom.coerceIn(2, 18)
         val n = 1 shl z
         val tileSizePx = (viewport.scalePx / n).toFloat()
-        if (tileSizePx <= 4f) return emptyList()
+        if (tileSizePx <= 4f || !tileSizePx.isFinite()) return emptyList()
 
         val halfW = (widthPx / 2.0) / viewport.scalePx
         val halfH = (heightPx / 2.0) / viewport.scalePx
@@ -179,7 +270,7 @@ object MapProjection {
                         leftPx = leftPx,
                         topPx = topPx,
                         sizePx = tileSizePx,
-                        url = tileUrl(tx, ty, z, darkTheme)
+                        url = tileUrl(tx, ty, z, layerType)
                     )
                 )
             }

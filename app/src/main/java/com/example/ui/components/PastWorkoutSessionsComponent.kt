@@ -1,6 +1,7 @@
 package com.example.ui.components
 
 import android.graphics.Bitmap
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -12,13 +13,14 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -28,9 +30,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.AspectRatio
 import androidx.compose.material.icons.rounded.AutoAwesome
-import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.FileDownload
@@ -47,15 +49,18 @@ import androidx.compose.material.icons.rounded.UploadFile
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.PrimaryTabRow
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -460,65 +465,82 @@ fun ShareActivityDialog(
 
     Dialog(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false
+        )
     ) {
+        BackHandler(onBack = onDismiss)
         Surface(
-            shape = RoundedCornerShape(22.dp),
-            color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 6.dp,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 20.dp)
-                .widthIn(max = 560.dp)
-                .heightIn(max = 760.dp)
+            color = MaterialTheme.colorScheme.background,
+            modifier = Modifier.fillMaxSize()
         ) {
-            Column(modifier = Modifier.fillMaxWidth()) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 18.dp, end = 8.dp, top = 12.dp, bottom = 6.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Share & Export Activity",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold
+            Scaffold(
+                contentWindowInsets = WindowInsets.safeDrawing,
+                topBar = {
+                    TopAppBar(
+                        title = {
+                            Column {
+                                Text(
+                                    text = "Share & Export Activity",
+                                    style = MaterialTheme.typography.titleLarge,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1
+                                )
+                                Text(
+                                    text = workout.title,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        },
+                        navigationIcon = {
+                            IconButton(
+                                onClick = onDismiss,
+                                modifier = Modifier.testTag("close_share_dialog_btn")
+                            ) {
+                                Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back from Share")
+                            }
+                        }
                     )
-                    IconButton(
-                        onClick = onDismiss,
-                        modifier = Modifier.testTag("close_share_dialog_btn")
-                    ) {
-                        Icon(Icons.Rounded.Close, contentDescription = "Close Share dialog")
-                    }
                 }
-
-                if (hasGpsPoints) {
-                    PrimaryTabRow(selectedTabIndex = activeTab) {
-                        Tab(
-                            selected = activeTab == 0,
-                            onClick = { activeTab = 0 },
-                            text = { Text("Share Card") },
-                            icon = { Icon(Icons.Rounded.Image, contentDescription = null, modifier = Modifier.size(16.dp)) },
-                            modifier = Modifier.testTag("share_tab_card")
-                        )
-                        Tab(
-                            selected = activeTab == 1,
-                            onClick = { activeTab = 1 },
-                            text = { Text("Flyover Map") },
-                            icon = { Icon(Icons.Rounded.PlayCircle, contentDescription = null, modifier = Modifier.size(16.dp)) },
-                            modifier = Modifier.testTag("share_tab_flyover")
-                        )
-                    }
-                }
-
+            ) { innerPadding ->
                 Column(
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .verticalScroll(rememberScrollState())
-                        .padding(16.dp)
+                        .fillMaxSize()
+                        .padding(innerPadding)
                 ) {
+                    if (hasGpsPoints) {
+                        PrimaryTabRow(selectedTabIndex = activeTab) {
+                            Tab(
+                                selected = activeTab == 0,
+                                onClick = { activeTab = 0 },
+                                text = { Text("Share Card") },
+                                icon = { Icon(Icons.Rounded.Image, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                                modifier = Modifier.testTag("share_tab_card")
+                            )
+                            Tab(
+                                selected = activeTab == 1,
+                                onClick = { activeTab = 1 },
+                                text = { Text("Flyover Map") },
+                                icon = { Icon(Icons.Rounded.PlayCircle, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                                modifier = Modifier.testTag("share_tab_flyover")
+                            )
+                        }
+                    }
+
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .widthIn(max = 600.dp)
+                            .weight(1f)
+                            .verticalScroll(rememberScrollState())
+                            .padding(16.dp)
+                    ) {
                     if (activeTab == 1 && hasGpsPoints) {
                         FlyoverMapAnimator(
                             workout = workout,
@@ -781,4 +803,5 @@ fun ShareActivityDialog(
             }
         }
     }
+}
 }

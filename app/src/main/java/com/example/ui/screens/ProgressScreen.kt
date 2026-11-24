@@ -39,6 +39,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -50,6 +51,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -83,7 +85,7 @@ import com.example.ui.theme.SignalCyan
 import com.example.ui.theme.VeloOrange
 import com.example.ui.theme.VioletZone
 
-@OptIn(ExperimentalLayoutApi::class)
+@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun ProgressScreen(viewModel: MainViewModel) {
     val analytics by viewModel.analyticsState.collectAsStateWithLifecycle()
@@ -92,6 +94,7 @@ fun ProgressScreen(viewModel: MainViewModel) {
     val challengesState by viewModel.challengesState.collectAsStateWithLifecycle()
     val coachState by viewModel.coachResponseState.collectAsStateWithLifecycle()
     val liveVoiceState by viewModel.liveVoiceState.collectAsStateWithLifecycle()
+    val isRefreshing by viewModel.isRefreshing.collectAsStateWithLifecycle()
 
     val latestHealth = (healthLogsState as? UiState.Success)?.data?.firstOrNull()
     val gearList = (gearState as? UiState.Success)?.data.orEmpty()
@@ -110,11 +113,18 @@ fun ProgressScreen(viewModel: MainViewModel) {
         }
     }
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+    PullToRefreshBox(
+        isRefreshing = isRefreshing,
+        onRefresh = { viewModel.refreshAllData() },
+        modifier = Modifier
+            .fillMaxSize()
+            .testTag("progress_pull_refresh")
     ) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
         // 1. VO2 Max & Cardiovascular Fitness
         item {
             Card(
@@ -723,6 +733,7 @@ fun ProgressScreen(viewModel: MainViewModel) {
                     )
                 }
             }
+        }
         }
     }
 

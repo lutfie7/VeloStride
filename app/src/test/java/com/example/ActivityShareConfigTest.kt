@@ -1,6 +1,7 @@
 package com.example
 
 import com.example.core.ActivityShareHelper
+import com.example.core.FlyoverDisplayConfig
 import com.example.core.FlyoverVideoExporter
 import com.example.core.ShareCardConfig
 import com.example.core.ShareCardRatio
@@ -120,9 +121,36 @@ class ActivityShareConfigTest {
             // Moving East -> heading ~ +90 deg, and at progress=0.5 sin(pi)=0 so rotationZ ~ -90 deg
             assertEquals(90f, midPose.headingDeg, 2.5f)
             assertEquals(-90f, midPose.rotationZDeg, 2.5f)
-            assertTrue(midPose.pitchDeg in 38f..55f)
-            assertTrue(midPose.zoomScale in 1.3f..1.7f)
+            assertTrue(midPose.pitchDeg in 28f..41f)
+            assertTrue(midPose.zoomScale in 1.1f..1.45f)
             assertTrue(midPose.lookAtLng > 106.810)
         }
+    }
+
+    @Test
+    fun `flyover display config defaults and NaN or empty track pose remain finite and safe`() {
+        val defaults = FlyoverDisplayConfig()
+        assertTrue(defaults.showDistance)
+        assertTrue(defaults.showDuration)
+        assertTrue(defaults.showElevation)
+        assertTrue(defaults.showPaceOrSpeed)
+        assertTrue(defaults.showHeartRate)
+        assertTrue(defaults.showElevationProfile)
+        assertTrue(defaults.showBrandBadge)
+
+        val custom = defaults.copy(showHeartRate = false, showElevationProfile = false)
+        assertFalse(custom.showHeartRate)
+        assertFalse(custom.showElevationProfile)
+        assertTrue(custom.showDistance)
+
+        val fallbackPose = FlyoverVideoExporter.computeCinematicCameraPose(
+            points = emptyList(),
+            cumulativeDistances = DoubleArray(0),
+            progress = Float.NaN,
+            ratio = ShareCardRatio.SQUARE_1_1
+        )
+        assertTrue(fallbackPose.pitchDeg.isFinite() && fallbackPose.pitchDeg in 28f..41f)
+        assertTrue(fallbackPose.zoomScale.isFinite() && fallbackPose.zoomScale in 1.1f..1.45f)
+        assertTrue(fallbackPose.rotationZDeg.isFinite())
     }
 }

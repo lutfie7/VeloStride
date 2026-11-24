@@ -1,5 +1,6 @@
 package com.example
 
+import com.example.core.MapLayerType
 import com.example.core.MapProjection
 import com.example.data.model.TrackPoint
 import org.junit.Assert.assertEquals
@@ -63,5 +64,52 @@ class MapProjectionTest {
         assertTrue(darkTiles.all { it.url.startsWith("https://tile.openstreetmap.org/14/") && it.url.endsWith(".png") })
         assertTrue(lightTiles.isNotEmpty())
         assertTrue(lightTiles.all { it.url.startsWith("https://tile.openstreetmap.org/14/") && it.url.endsWith(".png") })
+    }
+
+    @Test
+    fun mapLayerTypesProduceDistinctValidTileUrls() {
+        val osm = MapProjection.tileUrl(10, 20, 14, MapLayerType.STANDARD)
+        val dark = MapProjection.tileUrl(10, 20, 14, MapLayerType.DARK)
+        val topo = MapProjection.tileUrl(10, 20, 14, MapLayerType.TOPO)
+        val cycling = MapProjection.tileUrl(10, 20, 14, MapLayerType.CYCLING)
+
+        assertTrue(osm.contains("tile.openstreetmap.org/14/10/20.png"))
+        assertTrue(dark.contains("tile.openstreetmap.org/14/10/20.png"))
+        assertTrue(topo.contains("tile.opentopomap.org/14/10/20.png"))
+        assertTrue(cycling.contains("tile-cyclosm.openstreetmap.fr/cyclosm/14/10/20.png"))
+    }
+
+    @Test
+    fun zoomAroundFocusKeepsGeographicFocusCoordinateAnchored() {
+        val vp = MapProjection.computeViewportForCenter(-6.2185, 106.8020, zoom = 14)
+        val width = 800f
+        val height = 600f
+        val focusX = 560f
+        val focusY = 220f
+        val (latBefore, lngBefore) = MapProjection.unproject(focusX, focusY, vp, width, height, bearingDeg = 25f)
+
+        val zoomed = MapProjection.zoomAroundFocus(
+            viewport = vp,
+            focusX = focusX,
+            focusY = focusY,
+            widthPx = width,
+            heightPx = height,
+            zoomFactor = 1.6f,
+            bearingDeg = 25f
+        )
+        val (latAfter, lngAfter) = MapProjection.unproject(focusX, focusY, zoomed, width, height, bearingDeg = 25f)
+
+        assertTrue(zoomed.scalePx > vp.scalePx)
+        assertEquals(latBefore, latAfter, 1e-4)
+        assertEquals(lngBefore, lngAfter, 1e-4)
+    }
+
+    @Test
+    fun panViewportMovesCenterInOppositeWorldDirection() {
+        val vp = MapProjection.computeViewportForCenter(-6.2185, 106.8020, zoom = 14)
+        val panned = MapProjection.panViewport(vp, deltaXPx = 120f, deltaYPx = -80f, bearingDeg = 0f)
+
+        assertTrue(panned.centerWX < vp.centerWX)
+        assertTrue(panned.centerWY > vp.centerWY)
     }
 }

@@ -59,6 +59,16 @@ enum class FlyoverCameraMode(val label: String) {
     FULL_ROUTE("Full Route"),
 }
 
+data class FlyoverDisplayConfig(
+    val showDistance: Boolean = true,
+    val showDuration: Boolean = true,
+    val showElevation: Boolean = true,
+    val showPaceOrSpeed: Boolean = true,
+    val showHeartRate: Boolean = true,
+    val showElevationProfile: Boolean = true,
+    val showBrandBadge: Boolean = true,
+)
+
 data class CinematicCameraPose(
     val lookAtLat: Double,
     val lookAtLng: Double,
@@ -144,11 +154,14 @@ object FlyoverVideoExporter {
         progress: Float,
         ratio: ShareCardRatio,
     ): CinematicCameraPose {
-        val clamped = progress.coerceIn(0f, 1f)
+        if (points.isEmpty()) {
+            return CinematicCameraPose(0.0, 0.0, 0f, 34f, 1.24f, 0.09f, 0f)
+        }
+        val clamped = if (progress.isFinite()) progress.coerceIn(0f, 1f) else 0f
         val lookAtSample = interpolateSample(
             points = points,
             cumulativeDistances = cumulativeDistances,
-            progress = (clamped + 0.032f).coerceIn(0f, 1f)
+            progress = (clamped + 0.030f).coerceIn(0f, 1f)
         )
         val backSample = interpolateSample(
             points = points,
@@ -164,25 +177,25 @@ object FlyoverVideoExporter {
         val dWX = MapProjection.lngToWorldX(aheadSample.lng) - MapProjection.lngToWorldX(backSample.lng)
         val dWY = MapProjection.latToWorldY(aheadSample.lat) - MapProjection.latToWorldY(backSample.lat)
         val headingDeg = if (hypot(dWX, dWY) > 1e-9) {
-            Math.toDegrees(atan2(dWX, -dWY)).toFloat()
+            Math.toDegrees(atan2(dWX, -dWY)).toFloat().takeIf { it.isFinite() } ?: 0f
         } else {
             0f
         }
 
         // Gentle filmic drone banking & orbit pan layered atop travel heading
-        val orbitSweepDeg = (sin(clamped * 2.0 * PI) * 11.0).toFloat()
-        val rotationZDeg = -headingDeg + orbitSweepDeg
+        val orbitSweepDeg = (sin(clamped * 2.0 * PI) * 10.0).toFloat()
+        val rotationZDeg = (-headingDeg + orbitSweepDeg).takeIf { it.isFinite() } ?: 0f
 
-        val pitchBase = if (ratio == ShareCardRatio.PORTRAIT_9_16) 40f else 46f
-        val pitchDeg = pitchBase + (sin(clamped * PI) * 6.0).toFloat()
+        val pitchBase = if (ratio == ShareCardRatio.PORTRAIT_9_16) 33f else 36f
+        val pitchDeg = (pitchBase + (sin(clamped * PI) * 4.0).toFloat()).coerceIn(28f, 41f)
 
         val scaleBase = when (ratio) {
-            ShareCardRatio.LANDSCAPE_16_9 -> 1.48f
-            ShareCardRatio.SQUARE_1_1 -> 1.42f
-            ShareCardRatio.PORTRAIT_9_16 -> 1.38f
+            ShareCardRatio.LANDSCAPE_16_9 -> 1.26f
+            ShareCardRatio.SQUARE_1_1 -> 1.22f
+            ShareCardRatio.PORTRAIT_9_16 -> 1.20f
         }
-        val zoomScale = scaleBase + (sin(clamped * PI) * 0.14).toFloat()
-        val translationYFraction = if (ratio == ShareCardRatio.PORTRAIT_9_16) 0.10f else 0.13f
+        val zoomScale = (scaleBase + (sin(clamped * PI) * 0.10).toFloat()).coerceIn(1.1f, 1.45f)
+        val translationYFraction = if (ratio == ShareCardRatio.PORTRAIT_9_16) 0.08f else 0.10f
 
         return CinematicCameraPose(
             lookAtLat = lookAtSample.lat,
@@ -217,6 +230,8 @@ object FlyoverVideoExporter {
         cameraMode: FlyoverCameraMode,
         speedMultiplier: Float,
         darkTheme: Boolean,
+        displayConfig: FlyoverDisplayConfig = FlyoverDisplayConfig(),
+        layerType: MapLayerType = if (darkTheme) MapLayerType.DARK else MapLayerType.STANDARD,
         onProgress: (Float, String) -> Unit,
     ): File = withContext(Dispatchers.Default) {
         val points = workout.decodedPoints
@@ -236,7 +251,7 @@ object FlyoverVideoExporter {
         val durationSec = (12f / speedMultiplier.coerceIn(1f, 8f)).coerceIn(4f, 12f)
         val totalFrames = (durationSec * FPS).roundToInt().coerceIn(90, 360)
 
-        onProgress(0.04f, "Memuat tile peta OpenStreetMap...")
+        onProgress(0.04f, "Memuat tile peta...")
         val tileCache = withContext(Dispatchers.IO) {
             prefetchFlyoverTiles(
                 points = points,
@@ -246,7 +261,8 @@ object FlyoverVideoExporter {
                 ratio = ratio,
                 cameraMode = cameraMode,
                 followZoom = followZoom,
-                darkTheme = darkTheme
+                darkTheme = darkTheme,
+                layerType = layerType
             )
         }
 
@@ -264,7 +280,7 @@ object FlyoverVideoExporter {
         )
 
         val tilePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
-            if (darkTheme) {
+            if (layerType == MapLayerType.DARK) {
                 colorFilter = ColorMatrixColorFilter(
                     ColorMatrix(
                         floatArrayOf(
@@ -353,7 +369,9 @@ object FlyoverVideoExporter {
                     viewport = activeViewport,
                     tileCache = tileCache,
                     tilePaint = tilePaint,
-                    darkTheme = darkTheme
+                    darkTheme = darkTheme,
+                    displayConfig = displayConfig,
+                    layerType = layerType
                 )
 
                 renderer.renderBitmap(frameBitmap, frameIdx * frameDurationNs)
@@ -468,17 +486,18 @@ object FlyoverVideoExporter {
         cameraMode: FlyoverCameraMode,
         followZoom: Int,
         darkTheme: Boolean,
+        layerType: MapLayerType,
     ): Map<String, Bitmap> {
         val neededUrls = LinkedHashMap<String, String>()
         when (cameraMode) {
             FlyoverCameraMode.FULL_ROUTE -> {
                 val vp = MapProjection.computeViewportForPoints(points, widthPx, heightPx, 64f)
-                MapProjection.visibleTiles(vp, widthPx, heightPx, darkTheme).forEach { tile ->
+                MapProjection.visibleTiles(vp, widthPx, heightPx, darkTheme, layerType).forEach { tile ->
                     neededUrls["${tile.zoom}/${tile.x}/${tile.y}"] = tile.url
                 }
             }
             FlyoverCameraMode.FOLLOW_3D -> {
-                val steps = 16
+                val steps = 14
                 for (s in 0..steps) {
                     val sample = interpolateSample(points, cumulativeDistances, s / steps.toFloat())
                     val vp = MapProjection.computeViewportForCenter(
@@ -487,28 +506,28 @@ object FlyoverVideoExporter {
                         zoom = followZoom,
                         tileSizePx = 320.0
                     )
-                    MapProjection.visibleTiles(vp, widthPx, heightPx, darkTheme).forEach { tile ->
+                    MapProjection.visibleTiles(vp, widthPx, heightPx, darkTheme, layerType).forEach { tile ->
                         val key = "${tile.zoom}/${tile.x}/${tile.y}"
-                        if (neededUrls.size < 48) {
+                        if (neededUrls.size < 40) {
                             neededUrls.putIfAbsent(key, tile.url)
                         }
                     }
                 }
             }
             FlyoverCameraMode.CINEMATIC_3D -> {
-                val overscan = hypot(widthPx, heightPx) * 1.25f
-                val steps = 16
+                val overscan = maxOf(widthPx, heightPx) * 1.18f
+                val steps = 14
                 for (s in 0..steps) {
                     val pose = computeCinematicCameraPose(points, cumulativeDistances, s / steps.toFloat(), ratio)
                     val vp = MapProjection.computeViewportForCenter(
                         centerLat = pose.lookAtLat,
                         centerLng = pose.lookAtLng,
                         zoom = followZoom,
-                        tileSizePx = 380.0
+                        tileSizePx = 320.0
                     )
-                    MapProjection.visibleTiles(vp, overscan, overscan, darkTheme).forEach { tile ->
+                    MapProjection.visibleTiles(vp, overscan, overscan, darkTheme, layerType).forEach { tile ->
                         val key = "${tile.zoom}/${tile.x}/${tile.y}"
-                        if (neededUrls.size < 72) {
+                        if (neededUrls.size < 42) {
                             neededUrls.putIfAbsent(key, tile.url)
                         }
                     }
@@ -516,6 +535,9 @@ object FlyoverVideoExporter {
             }
         }
 
+        val decodeOpts = BitmapFactory.Options().apply {
+            inPreferredConfig = Bitmap.Config.RGB_565
+        }
         val cache = HashMap<String, Bitmap>(neededUrls.size)
         for ((key, url) in neededUrls) {
             val bmp = runCatching {
@@ -524,7 +546,7 @@ object FlyoverVideoExporter {
                     readTimeout = 5000
                     setRequestProperty("User-Agent", "VeloStride/1.0 (Android; com.aistudio.velostride.kxqrmz)")
                 }
-                conn.inputStream.use { stream -> BitmapFactory.decodeStream(stream) }
+                conn.inputStream.use { stream -> BitmapFactory.decodeStream(stream, null, decodeOpts) }
             }.getOrNull()
             if (bmp != null) {
                 cache[key] = bmp
@@ -552,6 +574,8 @@ object FlyoverVideoExporter {
         tileCache: Map<String, Bitmap>,
         tilePaint: Paint,
         darkTheme: Boolean,
+        displayConfig: FlyoverDisplayConfig,
+        layerType: MapLayerType,
     ) {
         val w = width.toFloat()
         val h = height.toFloat()
@@ -568,10 +592,10 @@ object FlyoverVideoExporter {
             }
             canvas.drawRect(0f, 0f, w, h, skyPaint)
         } else {
-            canvas.drawColor(if (darkTheme) 0xFF0E131B.toInt() else 0xFFECEAE4.toInt())
+            canvas.drawColor(if (layerType == MapLayerType.DARK || darkTheme) 0xFF0E131B.toInt() else 0xFFECEAE4.toInt())
         }
 
-        val projW = if (isCinematic) hypot(w, h) * 1.25f else w
+        val projW = if (isCinematic) maxOf(w, h) * 1.18f else w
         val projH = if (isCinematic) projW else h
 
         canvas.save()
@@ -580,11 +604,12 @@ object FlyoverVideoExporter {
                 val camera = Camera()
                 val matrix = Matrix()
                 camera.save()
+                camera.setLocation(0f, 0f, -24f)
                 camera.rotateX(24f)
                 camera.getMatrix(matrix)
                 camera.restore()
                 matrix.preTranslate(-w / 2f, -h / 2f)
-                matrix.postScale(1.22f, 1.22f)
+                matrix.postScale(1.20f, 1.20f)
                 matrix.postTranslate(w / 2f, h / 2f)
                 canvas.concat(matrix)
             }
@@ -597,7 +622,7 @@ object FlyoverVideoExporter {
                 val camera = Camera()
                 val camMatrix = Matrix()
                 camera.save()
-                camera.setLocation(0f, 0f, -14f)
+                camera.setLocation(0f, 0f, -32f)
                 camera.rotateX(pose.pitchDeg)
                 camera.getMatrix(camMatrix)
                 camera.restore()
@@ -609,7 +634,7 @@ object FlyoverVideoExporter {
             FlyoverCameraMode.FULL_ROUTE -> Unit
         }
 
-        val tiles = MapProjection.visibleTiles(viewport, projW, projH, darkTheme)
+        val tiles = MapProjection.visibleTiles(viewport, projW, projH, darkTheme, layerType)
         for (tile in tiles) {
             val bmp = tileCache["${tile.zoom}/${tile.x}/${tile.y}"]
             if (bmp != null && !bmp.isRecycled) {
@@ -818,109 +843,134 @@ object FlyoverVideoExporter {
         }
         val hudValPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.WHITE
-            textSize = 30f
+            textSize = 28f
             typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
         }
 
         val coveredKm = (displayTotalMeters * progress) / 1000.0
         val elapsedSec = (workout.movingTimeSeconds * progress).roundToInt().toLong()
-        val hasHr = sample.hr > 0
-        val hudWidth = (if (hasHr) 540f else 420f).coerceAtMost(w - pad * 2f)
-        val hudRect = RectF(pad, pad, pad + hudWidth, pad + 96f)
-        canvas.drawRoundRect(hudRect, 20f, 20f, hudBgPaint)
-
-        val colCount = if (hasHr) 4 else 3
-        val colW = (hudWidth - 32f) / colCount
-        val metricEntries = buildList {
-            add(Triple("DIST", String.format("%.2f km", coveredKm), 0xFFFC4C02.toInt()))
-            add(Triple("TIME", Formatters.formatDuration(elapsedSec), Color.WHITE))
-            add(Triple("ELEV", "${sample.ele.roundToInt()} m", 0xFF00D4FF.toInt()))
-            if (hasHr) add(Triple("HR", "${sample.hr}", 0xFFEF4444.toInt()))
+        val paceOrSpeedEntry = if (workout.parsedSport.isPaceBased) {
+            Triple("PACE", Formatters.formatPaceShort(workout.avgPaceSecPerKm), 0xFF10B981.toInt())
+        } else {
+            Triple("SPEED", String.format("%.1f km/h", workout.avgSpeedKmh), 0xFF10B981.toInt())
         }
-        metricEntries.forEachIndexed { idx, (lbl, v, col) ->
-            val x = pad + 18f + idx * colW
-            canvas.drawText(lbl, x, pad + 34f, hudLabelPaint)
-            hudValPaint.color = col
-            canvas.drawText(v, x, pad + 74f, hudValPaint)
+        val metricEntries = buildList {
+            if (displayConfig.showDistance) {
+                add(Triple("DIST", String.format("%.2f km", coveredKm), 0xFFFC4C02.toInt()))
+            }
+            if (displayConfig.showDuration) {
+                add(Triple("TIME", Formatters.formatDuration(elapsedSec), Color.WHITE))
+            }
+            if (displayConfig.showElevation) {
+                add(Triple("ELEV", "${sample.ele.roundToInt()} m", 0xFF00D4FF.toInt()))
+            }
+            if (displayConfig.showPaceOrSpeed) {
+                add(paceOrSpeedEntry)
+            }
+            if (displayConfig.showHeartRate && sample.hr > 0) {
+                add(Triple("HR", "${sample.hr}", 0xFFEF4444.toInt()))
+            }
+        }
+
+        var hudRightEdge = pad
+        if (metricEntries.isNotEmpty()) {
+            val hudWidth = (metricEntries.size * 136f + 28f).coerceAtMost(w - pad * 2f)
+            val hudRect = RectF(pad, pad, pad + hudWidth, pad + 96f)
+            hudRightEdge = hudRect.right
+            canvas.drawRoundRect(hudRect, 20f, 20f, hudBgPaint)
+
+            val colW = (hudWidth - 28f) / metricEntries.size.coerceAtLeast(1)
+            metricEntries.forEachIndexed { idx, (lbl, v, col) ->
+                val x = pad + 16f + idx * colW
+                canvas.drawText(lbl, x, pad + 34f, hudLabelPaint)
+                hudValPaint.color = col
+                canvas.drawText(v, x, pad + 74f, hudValPaint)
+            }
         }
 
         // Top-right Brand / Activity badge (shown cleanly when space allows)
-        val brandText = "VELOSTRIDE"
-        val brandPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = 0xFFFC4C02.toInt()
-            textSize = 22f
-            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
-            letterSpacing = 0.12f
-        }
-        val brandW = brandPaint.measureText(brandText) + 34f
-        if (w - hudRect.right - pad > brandW + 14f) {
-            val badgeRect = RectF(w - pad - brandW, pad, w - pad, pad + 50f)
-            canvas.drawRoundRect(badgeRect, 14f, 14f, hudBgPaint)
-            canvas.drawText(brandText, badgeRect.left + 17f, badgeRect.top + 33f, brandPaint)
+        if (displayConfig.showBrandBadge) {
+            val brandText = "VELOSTRIDE"
+            val brandPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = 0xFFFC4C02.toInt()
+                textSize = 22f
+                typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+                letterSpacing = 0.12f
+            }
+            val brandW = brandPaint.measureText(brandText) + 34f
+            if (w - hudRightEdge - pad > brandW + 14f || metricEntries.isEmpty()) {
+                val badgeRect = RectF(w - pad - brandW, pad, w - pad, pad + 50f)
+                canvas.drawRoundRect(badgeRect, 14f, 14f, hudBgPaint)
+                canvas.drawText(brandText, badgeRect.left + 17f, badgeRect.top + 33f, brandPaint)
+            }
         }
 
         // Bottom Elevation Sparkline Card
-        val sparkTop = h - 108f
-        val sparkBottom = h - 28f
-        val sparkRect = RectF(pad, sparkTop, w - pad, sparkBottom)
-        canvas.drawRoundRect(sparkRect, 16f, 16f, hudBgPaint)
-
-        val span = (maxEle - minEle).coerceAtLeast(8.0)
-        val innerL = sparkRect.left + 18f
-        val innerR = sparkRect.right - 18f
-        val innerW = innerR - innerL
-        val innerT = sparkRect.top + 14f
-        val innerB = sparkRect.bottom - 14f
-        val innerH = innerB - innerT
-
-        val elePath = Path()
-        val fillPath = Path()
-        for (i in points.indices) {
-            val x = innerL + (cumulativeDistances[i] / totalTrackMeters).toFloat() * innerW
-            val y = innerB - ((points[i].ele - minEle) / span).toFloat() * innerH
-            if (i == 0) {
-                elePath.moveTo(x, y)
-                fillPath.moveTo(x, innerB)
-                fillPath.lineTo(x, y)
-            } else {
-                elePath.lineTo(x, y)
-                fillPath.lineTo(x, y)
-            }
-        }
-        fillPath.lineTo(innerR, innerB)
-        fillPath.close()
-
-        val sparkFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            shader = LinearGradient(
-                0f, innerT, 0f, innerB,
-                0x5500D4FF, 0x0000D4FF,
-                Shader.TileMode.CLAMP
-            )
-        }
-        val sparkLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = 0xFF00D4FF.toInt()
-            style = Paint.Style.STROKE
-            strokeWidth = 4f
-            strokeCap = Paint.Cap.ROUND
-        }
-        canvas.drawPath(fillPath, sparkFillPaint)
-        canvas.drawPath(elePath, sparkLinePaint)
-
-        val cursorX = innerL + progress * innerW
-        val cursorY = innerB - ((sample.ele - minEle) / span).toFloat() * innerH
-        val cursorLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = 0xFFFC4C02.toInt()
-            strokeWidth = 3f
-        }
-        canvas.drawLine(cursorX, innerT, cursorX, innerB, cursorLinePaint)
-        canvas.drawCircle(cursorX, cursorY, 7.5f, headPaint)
-        canvas.drawCircle(cursorX, cursorY, 3f, whitePaint)
-
         val attrPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = 0xB3FFFFFF.toInt()
             textSize = 15f
         }
-        canvas.drawText("© OpenStreetMap", sparkRect.right - 134f, sparkRect.top - 10f, attrPaint)
+        if (displayConfig.showElevationProfile) {
+            val sparkTop = h - 108f
+            val sparkBottom = h - 28f
+            val sparkRect = RectF(pad, sparkTop, w - pad, sparkBottom)
+            canvas.drawRoundRect(sparkRect, 16f, 16f, hudBgPaint)
+
+            val span = (maxEle - minEle).coerceAtLeast(8.0)
+            val innerL = sparkRect.left + 18f
+            val innerR = sparkRect.right - 18f
+            val innerW = innerR - innerL
+            val innerT = sparkRect.top + 14f
+            val innerB = sparkRect.bottom - 14f
+            val innerH = innerB - innerT
+
+            val elePath = Path()
+            val fillPath = Path()
+            for (i in points.indices) {
+                val x = innerL + (cumulativeDistances[i] / totalTrackMeters).toFloat() * innerW
+                val y = innerB - ((points[i].ele - minEle) / span).toFloat() * innerH
+                if (i == 0) {
+                    elePath.moveTo(x, y)
+                    fillPath.moveTo(x, innerB)
+                    fillPath.lineTo(x, y)
+                } else {
+                    elePath.lineTo(x, y)
+                    fillPath.lineTo(x, y)
+                }
+            }
+            fillPath.lineTo(innerR, innerB)
+            fillPath.close()
+
+            val sparkFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                shader = LinearGradient(
+                    0f, innerT, 0f, innerB,
+                    0x5500D4FF, 0x0000D4FF,
+                    Shader.TileMode.CLAMP
+                )
+            }
+            val sparkLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = 0xFF00D4FF.toInt()
+                style = Paint.Style.STROKE
+                strokeWidth = 4f
+                strokeCap = Paint.Cap.ROUND
+            }
+            canvas.drawPath(fillPath, sparkFillPaint)
+            canvas.drawPath(elePath, sparkLinePaint)
+
+            val cursorX = innerL + progress * innerW
+            val cursorY = innerB - ((sample.ele - minEle) / span).toFloat() * innerH
+            val cursorLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = 0xFFFC4C02.toInt()
+                strokeWidth = 3f
+            }
+            canvas.drawLine(cursorX, innerT, cursorX, innerB, cursorLinePaint)
+            canvas.drawCircle(cursorX, cursorY, 7.5f, headPaint)
+            canvas.drawCircle(cursorX, cursorY, 3f, whitePaint)
+
+            canvas.drawText(layerType.attributionText, sparkRect.right - 150f, sparkRect.top - 10f, attrPaint)
+        } else {
+            canvas.drawText(layerType.attributionText, w - pad - 150f, h - pad, attrPaint)
+        }
     }
 
     private fun drainEncoder(

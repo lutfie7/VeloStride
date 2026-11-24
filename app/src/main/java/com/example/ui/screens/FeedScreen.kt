@@ -33,6 +33,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -41,6 +42,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -75,6 +77,7 @@ import com.example.ui.theme.JetBrainsMonoFontFamily
 import com.example.ui.theme.SignalCyan
 import com.example.ui.theme.VeloOrange
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FeedScreen(
     viewModel: MainViewModel,
@@ -89,6 +92,7 @@ fun FeedScreen(
     val analytics by viewModel.analyticsState.collectAsStateWithLifecycle()
     val bleState by viewModel.bleState.collectAsStateWithLifecycle()
     val healthLogsState by viewModel.healthLogsState.collectAsStateWithLifecycle()
+    val isRefreshing by viewModel.isRefreshing.collectAsStateWithLifecycle()
 
     val context = LocalContext.current
     var selectedFilter by remember { mutableStateOf<SportType?>(null) }
@@ -123,11 +127,18 @@ fun FeedScreen(
     val profile = (profileState as? UiState.Success)?.data ?: AthleteProfile()
     val latestHealth = (healthLogsState as? UiState.Success)?.data?.firstOrNull()
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+    PullToRefreshBox(
+        isRefreshing = isRefreshing,
+        onRefresh = { viewModel.refreshAllData() },
+        modifier = Modifier
+            .fillMaxSize()
+            .testTag("feed_pull_refresh")
     ) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
         // 1. Weekly Athlete Snapshot & Recovery Readiness Hero
         item {
             val workouts = (workoutsState as? UiState.Success)?.data ?: emptyList()
@@ -456,6 +467,7 @@ fun FeedScreen(
                     }
                 }
             }
+        }
         }
     }
 

@@ -331,6 +331,7 @@ data class BleDeviceCandidate(
     val supportsRsc: Boolean,
     val manufacturerName: String,
     val advertisedServices: List<String>,
+    val isBonded: Boolean = false,
 )
 
 data class BleTelemetryState(
@@ -338,6 +339,7 @@ data class BleTelemetryState(
     val statusMessage: String = "Ready to scan for HUAWEI Band 11 Pro or BLE sensors",
     val isScanning: Boolean = false,
     val autoReconnectEnabled: Boolean = true,
+    val showAllBleDevices: Boolean = false,
     val discoveredDevices: List<BleDeviceCandidate> = emptyList(),
     val connectedDeviceName: String? = null,
     val connectedMacAddress: String? = null,
