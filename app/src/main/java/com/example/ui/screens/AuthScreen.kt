@@ -54,10 +54,12 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.credentials.CredentialManager
 import com.example.R
 import com.example.core.attemptAutoSignIn
 import com.example.core.onGoogleSignInClicked
+import com.example.ui.components.VeloStrideWordmark
 import com.example.ui.theme.ObsidianBg
 import com.example.ui.theme.SignalCyan
 import com.example.ui.theme.VeloOrange
@@ -134,11 +136,9 @@ fun AuthScreen(
                     )
                     Spacer(Modifier.width(14.dp))
                     Column {
-                        Text(
-                            text = "VELOSTRIDE",
-                            style = MaterialTheme.typography.displayMedium,
-                            color = Color.White,
-                            fontWeight = FontWeight.Bold
+                        VeloStrideWordmark(
+                            fontSize = 34.sp,
+                            onDarkSurface = true
                         )
                         Text(
                             text = "GPS • Telemetry • Wearable Sync",

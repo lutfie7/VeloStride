@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+<title id="title">VeloStride Sprint stacked logo</title>
+<desc id="desc">Three forward motion bands with a small grey accent above the VeloStride wordmark.</desc>
+<g transform="translate(150 75)">
+ <path d="M12 20h68l-16 27H0z" fill="#F26A21"/>
+ <path d="M41 76h82l-16 27H25z" fill="#F26A21"/>
+ <path d="M70 132h96l-16 27H54z" fill="#F26A21"/>
+ <path d="M127 20h84l-16 27h-84z" fill="#AEB4BA"/>
+ <path d="M156 76h55l-16 27h-55z" fill="#D9DDE1"/>
+</g>
+<text x="256" y="354" text-anchor="middle" font-family="Inter, Manrope, Arial, sans-serif" font-size="63" font-weight="750" letter-spacing="-2.6" fill="#252A2E">Velo<tspan fill="#F26A21">Stride</tspan></text>
+</svg>

@@ -291,7 +291,7 @@ fun PastWorkoutSessionCard(
                 points = session.routePoints,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(172.dp)
+                    .height(236.dp)
             )
 
             Spacer(Modifier.height(10.dp))
@@ -558,7 +558,12 @@ fun ShareActivityDialog(
                             }
                         )
                     } else {
-                        // Card Preview sized to 1:1, 16:9, or 9:16 (with checkerboard when Transparent)
+                        // Strava-style large Card Preview sized to 1:1, 16:9, or 9:16
+                        val previewStageHeight = when (config.ratio) {
+                            ShareCardRatio.LANDSCAPE_16_9 -> 240.dp
+                            ShareCardRatio.SQUARE_1_1 -> 380.dp
+                            ShareCardRatio.PORTRAIT_9_16 -> 460.dp
+                        }
                         val previewStageModifier = if (config.ratio == ShareCardRatio.LANDSCAPE_16_9) {
                             Modifier
                                 .fillMaxWidth()
@@ -572,13 +577,13 @@ fun ShareActivityDialog(
                             contentAlignment = Alignment.Center,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(256.dp)
-                                .clip(RoundedCornerShape(14.dp))
+                                .height(previewStageHeight)
+                                .clip(RoundedCornerShape(16.dp))
                                 .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.28f))
                         ) {
                             Box(
                                 modifier = previewStageModifier
-                                    .clip(RoundedCornerShape(12.dp))
+                                    .clip(RoundedCornerShape(14.dp))
                             ) {
                                 if (config.style.isTransparent) {
                                     Canvas(modifier = Modifier.fillMaxSize()) {

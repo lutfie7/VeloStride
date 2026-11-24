@@ -153,24 +153,24 @@ object ActivityShareHelper {
         return when (config.ratio) {
             ShareCardRatio.SQUARE_1_1 -> {
                 val bottom = when {
-                    metricsCount == 0 -> 944f
-                    metricsCount <= 3 -> 756f
-                    metricsCount <= 6 -> 646f
-                    else -> 584f
+                    metricsCount == 0 -> 960f
+                    metricsCount <= 3 -> 788f
+                    metricsCount <= 6 -> 678f
+                    else -> 604f
                 }
-                floatArrayOf(60f, 304f, w - 60f, bottom)
+                floatArrayOf(48f, 282f, w - 48f, bottom)
             }
             ShareCardRatio.LANDSCAPE_16_9 -> {
-                floatArrayOf(784f, 56f, w - 56f, 844f)
+                floatArrayOf(730f, 44f, w - 44f, 856f)
             }
             ShareCardRatio.PORTRAIT_9_16 -> {
                 val bottom = when {
-                    metricsCount == 0 -> 1680f
-                    metricsCount <= 3 -> 1420f
-                    metricsCount <= 6 -> 1220f
-                    else -> 1080f
+                    metricsCount == 0 -> 1720f
+                    metricsCount <= 3 -> 1480f
+                    metricsCount <= 6 -> 1270f
+                    else -> 1120f
                 }
-                floatArrayOf(64f, 384f, w - 64f, bottom)
+                floatArrayOf(52f, 360f, w - 52f, bottom)
             }
         }
     }
@@ -406,31 +406,43 @@ object ActivityShareHelper {
             ShareCardRatio.LANDSCAPE_16_9 -> 56f
             ShareCardRatio.PORTRAIT_9_16 -> 64f
         }
-        val contentRight = if (isLandscapeSplit) 740f else width - contentLeft
+        val contentRight = if (isLandscapeSplit) 700f else width - contentLeft
         val usableWidth = contentRight - contentLeft
 
         val barTop = when (config.ratio) {
-            ShareCardRatio.SQUARE_1_1 -> 52f
-            ShareCardRatio.LANDSCAPE_16_9 -> 56f
-            ShareCardRatio.PORTRAIT_9_16 -> 92f
+            ShareCardRatio.SQUARE_1_1 -> 46f
+            ShareCardRatio.LANDSCAPE_16_9 -> 50f
+            ShareCardRatio.PORTRAIT_9_16 -> 84f
         }
-        val brandY = barTop + 58f
-        val pillTop = brandY + 24f
+        val brandY = barTop + 56f
+        val pillTop = brandY + 22f
         val pillBottom = pillTop + 48f
-        val titleY = pillBottom + 66f
+        val titleY = pillBottom + 62f
 
-        // Top accent bar & brand
+        // Top accent bar & two-tone VeloStride wordmark matching brand logo
         val accentPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = accentColor }
         canvas.drawRoundRect(RectF(contentLeft, barTop, contentLeft + 112f, barTop + 9f), 5f, 5f, accentPaint)
 
-        val brandPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = accentColor
-            textSize = if (config.ratio == ShareCardRatio.LANDSCAPE_16_9) 30f else 34f
+        val brandSize = if (config.ratio == ShareCardRatio.LANDSCAPE_16_9) 34f else 38f
+        val veloColor = if (cardStyle == ShareCardStyle.SUMMIT_LIGHT) 0xFF252A2E.toInt() else 0xFFE6EAEE.toInt()
+        val strideColor = if (cardStyle == ShareCardStyle.NEON_HUD) accentColor else 0xFFF26A21.toInt()
+        val veloPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = veloColor
+            textSize = brandSize
             typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
-            letterSpacing = 0.14f
+            letterSpacing = -0.04f
             if (cardStyle.isTransparent) setShadowLayer(shadowRadius, 0f, 3f, shadowColor)
         }
-        canvas.drawText("VELOSTRIDE", contentLeft, brandY, brandPaint)
+        val stridePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = strideColor
+            textSize = brandSize
+            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+            letterSpacing = -0.04f
+            if (cardStyle.isTransparent) setShadowLayer(shadowRadius, 0f, 3f, shadowColor)
+        }
+        canvas.drawText("Velo", contentLeft, brandY, veloPaint)
+        val veloWidth = veloPaint.measureText("Velo")
+        canvas.drawText("Stride", contentLeft + veloWidth, brandY, stridePaint)
 
         // Sport pill & optional date
         val sportText = workout.parsedSport.label.uppercase()

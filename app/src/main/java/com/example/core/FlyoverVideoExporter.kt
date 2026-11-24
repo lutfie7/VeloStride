@@ -323,8 +323,9 @@ object FlyoverVideoExporter {
 
             val bufferInfo = MediaCodec.BufferInfo()
             val frameDurationNs = 1_000_000_000L / FPS
-            val minEle = points.minOf { it.ele }
-            val maxEle = points.maxOf { it.ele }
+            val finiteEles = points.mapNotNull { it.ele.takeIf { e -> e.isFinite() } }
+            val minEle = finiteEles.minOrNull() ?: 0.0
+            val maxEle = finiteEles.maxOrNull() ?: 0.0
 
             for (frameIdx in 0 until totalFrames) {
                 // Hold briefly at the finish so viewers see the final route
@@ -346,7 +347,7 @@ object FlyoverVideoExporter {
                         centerLat = cinematicPose!!.lookAtLat,
                         centerLng = cinematicPose.lookAtLng,
                         zoom = followZoom,
-                        tileSizePx = 380.0
+                        tileSizePx = 320.0
                     )
                     FlyoverCameraMode.FULL_ROUTE -> overviewViewport
                 }
@@ -668,11 +669,14 @@ object FlyoverVideoExporter {
         val fullLiftedPath = Path()
 
         for (i in points.indices) {
-            val (px, py) = MapProjection.project(points[i].lat, points[i].lng, viewport, projW, projH)
+            val (pxRaw, pyRaw) = MapProjection.project(points[i].lat, points[i].lng, viewport, projW, projH)
+            val px = pxRaw.takeIf { it.isFinite() } ?: (projW / 2f)
+            val py = pyRaw.takeIf { it.isFinite() } ?: (projH / 2f)
             groundX[i] = px
             groundY[i] = py
+            val ptEle = points[i].ele.takeIf { it.isFinite() } ?: minEle
             val lift = if (hasElevationRelief) {
-                (((points[i].ele - minEle) / eleSpan).toFloat().coerceIn(0f, 1f)) * maxLiftPx
+                (((ptEle - minEle) / eleSpan).toFloat().coerceIn(0f, 1f)) * maxLiftPx
             } else 0f
             val lx = px + upVecX * lift
             val ly = py + upVecY * lift
@@ -720,9 +724,12 @@ object FlyoverVideoExporter {
         }
         canvas.drawPath(fullLiftedPath, upcomingPaint)
 
-        val (headGX, headGY) = MapProjection.project(sample.lat, sample.lng, viewport, projW, projH)
+        val (headGXRaw, headGYRaw) = MapProjection.project(sample.lat, sample.lng, viewport, projW, projH)
+        val headGX = headGXRaw.takeIf { it.isFinite() } ?: liftedX[0]
+        val headGY = headGYRaw.takeIf { it.isFinite() } ?: liftedY[0]
+        val sampleEle = sample.ele.takeIf { it.isFinite() } ?: minEle
         val headLift = if (hasElevationRelief) {
-            (((sample.ele - minEle) / eleSpan).toFloat().coerceIn(0f, 1f)) * maxLiftPx
+            (((sampleEle - minEle) / eleSpan).toFloat().coerceIn(0f, 1f)) * maxLiftPx
         } else 0f
         val headX = headGX + upVecX * headLift
         val headY = headGY + upVecY * headLift
@@ -888,20 +895,28 @@ object FlyoverVideoExporter {
             }
         }
 
-        // Top-right Brand / Activity badge (shown cleanly when space allows)
+        // Top-right Two-Tone VeloStride Brand badge
         if (displayConfig.showBrandBadge) {
-            val brandText = "VELOSTRIDE"
-            val brandPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = 0xFFFC4C02.toInt()
-                textSize = 22f
+            val veloPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = 0xFFE6EAEE.toInt()
+                textSize = 24f
                 typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
-                letterSpacing = 0.12f
+                letterSpacing = -0.04f
             }
-            val brandW = brandPaint.measureText(brandText) + 34f
+            val stridePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = 0xFFF26A21.toInt()
+                textSize = 24f
+                typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+                letterSpacing = -0.04f
+            }
+            val veloW = veloPaint.measureText("Velo")
+            val strideW = stridePaint.measureText("Stride")
+            val brandW = veloW + strideW + 34f
             if (w - hudRightEdge - pad > brandW + 14f || metricEntries.isEmpty()) {
                 val badgeRect = RectF(w - pad - brandW, pad, w - pad, pad + 50f)
                 canvas.drawRoundRect(badgeRect, 14f, 14f, hudBgPaint)
-                canvas.drawText(brandText, badgeRect.left + 17f, badgeRect.top + 33f, brandPaint)
+                canvas.drawText("Velo", badgeRect.left + 17f, badgeRect.top + 34f, veloPaint)
+                canvas.drawText("Stride", badgeRect.left + 17f + veloW, badgeRect.top + 34f, stridePaint)
             }
         }
 

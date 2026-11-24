@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.AutoAwesome
@@ -169,10 +170,13 @@ fun ActivityDetailScreen(
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                     shape = RoundedCornerShape(18.dp)
                 ) {
-                    Column(Modifier.padding(16.dp)) {
+                    Column {
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
                             SportBadge(workout.parsedSport)
                             Text(
@@ -181,15 +185,15 @@ fun ActivityDetailScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                        Spacer(Modifier.height(10.dp))
                         RoutePolylineCanvas(
                             points = workout.decodedPoints,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(260.dp)
+                                .height(390.dp)
+                                .clip(RoundedCornerShape(12.dp))
                         )
+                        Column(Modifier.padding(16.dp)) {
                         if (workout.decodedPoints.size >= 2) {
-                            Spacer(Modifier.height(10.dp))
                             OutlinedButton(
                                 onClick = { showFlyoverDialog = true },
                                 modifier = Modifier
@@ -201,8 +205,8 @@ fun ActivityDetailScreen(
                                 Spacer(Modifier.width(8.dp))
                                 Text("Play 3D Flyover Map Animator")
                             }
+                            Spacer(Modifier.height(14.dp))
                         }
-                        Spacer(Modifier.height(14.dp))
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween
@@ -243,6 +247,7 @@ fun ActivityDetailScreen(
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                        }
                         }
                     }
                 }

@@ -1,6 +1,8 @@
 package com.example.ui.components
 
 import android.annotation.SuppressLint
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -12,8 +14,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -24,7 +24,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -36,7 +35,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.AspectRatio
 import androidx.compose.material.icons.rounded.CameraAlt
-import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Explore
 import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material.icons.rounded.Movie
@@ -66,6 +64,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -78,16 +77,23 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -105,8 +111,13 @@ import com.example.ui.theme.EmeraldPeak
 import com.example.ui.theme.JetBrainsMonoFontFamily
 import com.example.ui.theme.SignalCyan
 import com.example.ui.theme.VeloOrange
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
+import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.roundToInt
@@ -410,11 +421,11 @@ fun FlyoverMapAnimator(
             )
         }
 
-        // Animated Map Stage sized to the chosen aspect ratio (1:1, 16:9, 9:16)
+        // Animated Map Stage sized generously to the chosen aspect ratio (1:1, 16:9, 9:16)
         val stageHeight = when (activeRatio) {
-            ShareCardRatio.LANDSCAPE_16_9 -> 200.dp
-            ShareCardRatio.SQUARE_1_1 -> 265.dp
-            ShareCardRatio.PORTRAIT_9_16 -> 320.dp
+            ShareCardRatio.LANDSCAPE_16_9 -> 240.dp
+            ShareCardRatio.SQUARE_1_1 -> 372.dp
+            ShareCardRatio.PORTRAIT_9_16 -> 450.dp
         }
         val frameSizeModifier = if (activeRatio == ShareCardRatio.LANDSCAPE_16_9) {
             Modifier
@@ -424,6 +435,20 @@ fun FlyoverMapAnimator(
             Modifier
                 .fillMaxHeight()
                 .aspectRatio(activeRatio.aspectFloat, matchHeightConstraintsFirst = true)
+        }
+
+        val tileBitmaps = remember { mutableStateMapOf<String, ImageBitmap>() }
+        val flyoverDarkTileFilter = remember {
+            ColorFilter.colorMatrix(
+                ColorMatrix(
+                    floatArrayOf(
+                        0.505f, -1.258f, -0.127f, 0f, 232f,
+                        -0.375f, -0.378f, -0.127f, 0f, 232f,
+                        -0.375f, -1.258f, 0.753f, 0f, 232f,
+                        0f, 0f, 0f, 1f, 0f
+                    )
+                )
+            )
         }
 
         Box(
@@ -456,11 +481,6 @@ fun FlyoverMapAnimator(
                     null
                 }
 
-                val projW = if (isCinematic) (maxOf(widthPx, heightPx) * 1.15f).coerceIn(64f, 1280f) else widthPx
-                val projH = if (isCinematic) projW else heightPx
-                val projWDp = with(density) { projW.toDp() }
-                val projHDp = with(density) { projH.toDp() }
-
                 val overviewViewport = remember(points, widthPx, heightPx, padPx) {
                     MapProjection.computeViewportForPoints(
                         points = points,
@@ -474,7 +494,7 @@ fun FlyoverMapAnimator(
                         centerLat = currentSample.lat,
                         centerLng = currentSample.lng,
                         zoom = followZoom,
-                        tileSizePx = 300.0
+                        tileSizePx = 280.0
                     )
                     FlyoverCameraMode.CINEMATIC_3D -> {
                         val pose = cinematicPose!!
@@ -482,10 +502,51 @@ fun FlyoverMapAnimator(
                             centerLat = pose.lookAtLat,
                             centerLng = pose.lookAtLng,
                             zoom = followZoom,
-                            tileSizePx = 300.0
+                            tileSizePx = 280.0
                         )
                     }
                     FlyoverCameraMode.FULL_ROUTE -> overviewViewport
+                }
+
+                val tileAreaW = if (isCinematic) {
+                    (hypot(widthPx, heightPx) * 1.05f).coerceIn(64f, 1400f)
+                } else {
+                    widthPx
+                }
+                val tileAreaH = if (isCinematic) tileAreaW else heightPx
+                val visibleTiles = remember(activeViewport, tileAreaW, tileAreaH, layerType) {
+                    MapProjection.visibleTiles(activeViewport, tileAreaW, tileAreaH, darkTheme, layerType)
+                }
+                val neededTileKeys = remember(visibleTiles, layerType) {
+                    visibleTiles.map { "${layerType.name}/${it.zoom}/${it.x}/${it.y}" to it.url }
+                }
+
+                LaunchedEffect(neededTileKeys) {
+                    val missing = neededTileKeys.filter { !tileBitmaps.containsKey(it.first) }
+                    if (missing.isEmpty()) return@LaunchedEffect
+                    val fetched = withContext(Dispatchers.IO) {
+                        val decodeOpts = BitmapFactory.Options().apply {
+                            inPreferredConfig = Bitmap.Config.RGB_565
+                        }
+                        missing.mapNotNull { (key, url) ->
+                            val bmp = runCatching {
+                                val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+                                    connectTimeout = 5000
+                                    readTimeout = 5000
+                                    setRequestProperty("User-Agent", "VeloStride/1.0 (Android; com.aistudio.velostride.kxqrmz)")
+                                }
+                                conn.inputStream.use { stream -> BitmapFactory.decodeStream(stream, null, decodeOpts) }
+                            }.getOrNull()
+                            bmp?.asImageBitmap()?.let { key to it }
+                        }
+                    }
+                    fetched.forEach { (k, img) ->
+                        if (tileBitmaps.size >= 36) {
+                            val oldest = tileBitmaps.keys.firstOrNull()
+                            if (oldest != null) tileBitmaps.remove(oldest)
+                        }
+                        tileBitmaps[k] = img
+                    }
                 }
 
                 if (isCinematic) {
@@ -503,8 +564,8 @@ fun FlyoverMapAnimator(
                     )
                 }
 
-                Box(
-                    contentAlignment = Alignment.Center,
+                // Single bounded Canvas with safe single-layer 3D tilt (avoids nested RenderNode + requiredSize crashes)
+                Canvas(
                     modifier = Modifier
                         .fillMaxSize()
                         .clipToBounds()
@@ -512,17 +573,17 @@ fun FlyoverMapAnimator(
                             when (cameraMode) {
                                 FlyoverCameraMode.FOLLOW_3D -> {
                                     rotationX = 24f
-                                    cameraDistance = 24f * density.density
+                                    cameraDistance = 16f
                                     scaleX = 1.20f
                                     scaleY = 1.20f
                                 }
                                 FlyoverCameraMode.CINEMATIC_3D -> {
                                     val pose = cinematicPose!!
-                                    val safePitch = pose.pitchDeg.takeIf { it.isFinite() }?.coerceIn(20f, 42f) ?: 34f
-                                    val safeScale = pose.zoomScale.takeIf { it.isFinite() }?.coerceIn(1.0f, 1.5f) ?: 1.22f
+                                    val safePitch = pose.pitchDeg.takeIf { it.isFinite() }?.coerceIn(20f, 38f) ?: 33f
+                                    val safeScale = pose.zoomScale.takeIf { it.isFinite() }?.coerceIn(1.05f, 1.45f) ?: 1.22f
                                     val safeTy = (heightPx * pose.translationYFraction).takeIf { it.isFinite() } ?: 0f
                                     rotationX = safePitch
-                                    cameraDistance = 24f * density.density
+                                    cameraDistance = 16f
                                     scaleX = safeScale
                                     scaleY = safeScale
                                     translationY = safeTy
@@ -531,181 +592,199 @@ fun FlyoverMapAnimator(
                             }
                         }
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .requiredSize(projWDp, projHDp)
-                            .graphicsLayer {
-                                if (isCinematic) {
-                                    val safeRot = cinematicPose?.rotationZDeg?.takeIf { it.isFinite() } ?: 0f
-                                    rotationZ = safeRot
-                                }
-                            }
-                    ) {
-                        MapTileBackground(
-                            viewport = activeViewport,
-                            widthPx = projW,
-                            heightPx = projH,
-                            darkTheme = darkTheme,
-                            layerType = layerType,
-                            enableCrossfade = false
+                    if (points.isEmpty() || size.width <= 1f || size.height <= 1f) return@Canvas
+                    val rotDeg = if (isCinematic) {
+                        cinematicPose?.rotationZDeg?.takeIf { it.isFinite() } ?: 0f
+                    } else 0f
+
+                    withTransform({
+                        if (isCinematic && rotDeg != 0f) {
+                            rotate(degrees = rotDeg, pivot = center)
+                        }
+                    }) {
+                        // 1. Map tiles (drawn safely from RGB_565 ImageBitmaps)
+                        val offsetX = (size.width - tileAreaW) / 2f
+                        val offsetY = (size.height - tileAreaH) / 2f
+                        for (tile in visibleTiles) {
+                            val key = "${layerType.name}/${tile.zoom}/${tile.x}/${tile.y}"
+                            val img = tileBitmaps[key] ?: continue
+                            val left = (tile.leftPx + offsetX).roundToInt()
+                            val top = (tile.topPx + offsetY).roundToInt()
+                            val tileDim = ceil(tile.sizePx + 1.5f).toInt().coerceAtLeast(1)
+                            drawImage(
+                                image = img,
+                                dstOffset = IntOffset(left, top),
+                                dstSize = IntSize(tileDim, tileDim),
+                                colorFilter = if (layerType == MapLayerType.DARK) flyoverDarkTileFilter else null
+                            )
+                        }
+                        drawRect(
+                            color = if (layerType == MapLayerType.DARK || darkTheme) {
+                                Color.Black.copy(alpha = 0.14f)
+                            } else {
+                                Color.White.copy(alpha = 0.06f)
+                            },
+                            topLeft = Offset(-size.width, -size.height),
+                            size = androidx.compose.ui.geometry.Size(size.width * 3f, size.height * 3f)
                         )
 
-                        Canvas(modifier = Modifier.fillMaxSize()) {
-                            if (points.isEmpty() || size.width <= 1f || size.height <= 1f) return@Canvas
-                            val minEle = points.minOf { it.ele }
-                            val maxEle = points.maxOf { it.ele }
-                            val eleSpan = (maxEle - minEle).coerceAtLeast(1.0)
-                            val hasRelief = isCinematic && (maxEle - minEle) >= 3.0
-                            val maxLiftPx = if (hasRelief) 26f else 0f
-                            val rotDeg = cinematicPose?.rotationZDeg?.takeIf { it.isFinite() } ?: 0f
-                            val rotRad = if (isCinematic) Math.toRadians(rotDeg.toDouble()) else 0.0
-                            val upX = (-sin(rotRad)).toFloat()
-                            val upY = (-cos(rotRad)).toFloat()
+                        // 2. Route geometry + 3D elevation relief
+                        val finiteEles = points.mapNotNull { it.ele.takeIf { e -> e.isFinite() } }
+                        val minEle = finiteEles.minOrNull() ?: 0.0
+                        val maxEle = finiteEles.maxOrNull() ?: 0.0
+                        val eleSpan = (maxEle - minEle).coerceAtLeast(1.0)
+                        val hasRelief = isCinematic && (maxEle - minEle) >= 3.0
+                        val maxLiftPx = if (hasRelief) 24f else 0f
+                        val rotRad = if (isCinematic) Math.toRadians(rotDeg.toDouble()) else 0.0
+                        val upX = (-sin(rotRad)).toFloat().takeIf { it.isFinite() } ?: 0f
+                        val upY = (-cos(rotRad)).toFloat().takeIf { it.isFinite() } ?: -1f
 
-                            val groundPts = ArrayList<Offset>(points.size)
-                            val liftedPts = ArrayList<Offset>(points.size)
-                            for (pt in points) {
-                                val (pxRaw, pyRaw) = MapProjection.project(pt.lat, pt.lng, activeViewport, size.width, size.height)
-                                val px = pxRaw.takeIf { it.isFinite() } ?: (size.width / 2f)
-                                val py = pyRaw.takeIf { it.isFinite() } ?: (size.height / 2f)
-                                groundPts.add(Offset(px, py))
-                                val lift = if (hasRelief) {
-                                    (((pt.ele - minEle) / eleSpan).toFloat().coerceIn(0f, 1f)) * maxLiftPx
-                                } else 0f
-                                liftedPts.add(Offset(px + upX * lift, py + upY * lift))
-                            }
-                            if (liftedPts.isEmpty()) return@Canvas
+                        val groundPts = ArrayList<Offset>(points.size)
+                        val liftedPts = ArrayList<Offset>(points.size)
+                        for (pt in points) {
+                            val (pxRaw, pyRaw) = MapProjection.project(pt.lat, pt.lng, activeViewport, size.width, size.height)
+                            val px = pxRaw.takeIf { it.isFinite() } ?: (size.width / 2f)
+                            val py = pyRaw.takeIf { it.isFinite() } ?: (size.height / 2f)
+                            groundPts.add(Offset(px, py))
+                            val ptEle = pt.ele.takeIf { it.isFinite() } ?: minEle
+                            val lift = if (hasRelief) {
+                                (((ptEle - minEle) / eleSpan).toFloat().coerceIn(0f, 1f)) * maxLiftPx
+                            } else 0f
+                            liftedPts.add(Offset(px + upX * lift, py + upY * lift))
+                        }
+                        if (liftedPts.isEmpty()) return@withTransform
 
-                            if (isCinematic) {
-                                val shadowPath = Path().apply {
-                                    moveTo(groundPts.first().x, groundPts.first().y)
-                                    for (i in 1 until groundPts.size) {
-                                        lineTo(groundPts[i].x, groundPts[i].y)
-                                    }
-                                }
-                                drawPath(
-                                    shadowPath,
-                                    Color.Black.copy(alpha = 0.42f),
-                                    style = Stroke(width = 8f, cap = StrokeCap.Round, join = StrokeJoin.Round)
-                                )
-                                if (hasRelief) {
-                                    val step = (points.size / 36).coerceAtLeast(1)
-                                    for (i in points.indices step step) {
-                                        drawLine(
-                                            color = SignalCyan.copy(alpha = 0.28f),
-                                            start = groundPts[i],
-                                            end = liftedPts[i],
-                                            strokeWidth = 2f
-                                        )
-                                    }
-                                }
-                            }
-
-                            val fullPath = Path().apply {
-                                moveTo(liftedPts.first().x, liftedPts.first().y)
-                                for (i in 1 until liftedPts.size) {
-                                    lineTo(liftedPts[i].x, liftedPts[i].y)
+                        if (isCinematic) {
+                            val shadowPath = Path().apply {
+                                moveTo(groundPts.first().x, groundPts.first().y)
+                                for (i in 1 until groundPts.size) {
+                                    lineTo(groundPts[i].x, groundPts[i].y)
                                 }
                             }
                             drawPath(
-                                fullPath,
-                                VeloOrange.copy(alpha = 0.24f),
-                                style = Stroke(width = 6f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                                shadowPath,
+                                Color.Black.copy(alpha = 0.42f),
+                                style = Stroke(width = 8f, cap = StrokeCap.Round, join = StrokeJoin.Round)
                             )
+                            if (hasRelief) {
+                                val step = (points.size / 36).coerceAtLeast(1)
+                                for (i in points.indices step step) {
+                                    drawLine(
+                                        color = SignalCyan.copy(alpha = 0.28f),
+                                        start = groundPts[i],
+                                        end = liftedPts[i],
+                                        strokeWidth = 2f
+                                    )
+                                }
+                            }
+                        }
 
-                            val (headGXRaw, headGYRaw) = MapProjection.project(
-                                currentSample.lat,
-                                currentSample.lng,
+                        val fullPath = Path().apply {
+                            moveTo(liftedPts.first().x, liftedPts.first().y)
+                            for (i in 1 until liftedPts.size) {
+                                lineTo(liftedPts[i].x, liftedPts[i].y)
+                            }
+                        }
+                        drawPath(
+                            fullPath,
+                            VeloOrange.copy(alpha = 0.24f),
+                            style = Stroke(width = 6f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                        )
+
+                        val (headGXRaw, headGYRaw) = MapProjection.project(
+                            currentSample.lat,
+                            currentSample.lng,
+                            activeViewport,
+                            size.width,
+                            size.height
+                        )
+                        val headGX = headGXRaw.takeIf { it.isFinite() } ?: liftedPts.first().x
+                        val headGY = headGYRaw.takeIf { it.isFinite() } ?: liftedPts.first().y
+                        val sampleEle = currentSample.ele.takeIf { it.isFinite() } ?: minEle
+                        val headLift = if (hasRelief) {
+                            (((sampleEle - minEle) / eleSpan).toFloat().coerceIn(0f, 1f)) * maxLiftPx
+                        } else 0f
+                        val headGround = Offset(headGX, headGY)
+                        val headOffset = Offset(headGX + upX * headLift, headGY + upY * headLift)
+
+                        val activePath = Path().apply {
+                            moveTo(liftedPts.first().x, liftedPts.first().y)
+                            val maxSeg = currentSample.segmentIndex.coerceIn(0, liftedPts.lastIndex)
+                            for (i in 1..maxSeg) {
+                                lineTo(liftedPts[i].x, liftedPts[i].y)
+                            }
+                            lineTo(headOffset.x, headOffset.y)
+                        }
+
+                        drawPath(
+                            activePath,
+                            Color.Black.copy(alpha = if (darkTheme) 0.50f else 0.25f),
+                            style = Stroke(width = 14f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                        )
+                        drawPath(
+                            activePath,
+                            VeloOrange.copy(alpha = 0.34f),
+                            style = Stroke(width = 18f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                        )
+                        drawPath(
+                            activePath,
+                            VeloOrange,
+                            style = Stroke(width = if (isCinematic) 8f else 7f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                        )
+
+                        if (isCinematic) {
+                            drawPath(
+                                activePath,
+                                Color(0xAAFFF3E0),
+                                style = Stroke(width = 2.5f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                            )
+                            val aheadSample = FlyoverVideoExporter.interpolateSample(
+                                points,
+                                cumulativeDistances,
+                                (progress + 0.025f).coerceIn(0f, 1f)
+                            )
+                            val (aGXRaw, aGYRaw) = MapProjection.project(
+                                aheadSample.lat,
+                                aheadSample.lng,
                                 activeViewport,
                                 size.width,
                                 size.height
                             )
-                            val headGX = headGXRaw.takeIf { it.isFinite() } ?: liftedPts.first().x
-                            val headGY = headGYRaw.takeIf { it.isFinite() } ?: liftedPts.first().y
-                            val headLift = if (hasRelief) {
-                                (((currentSample.ele - minEle) / eleSpan).toFloat().coerceIn(0f, 1f)) * maxLiftPx
+                            val aGX = aGXRaw.takeIf { it.isFinite() } ?: headGX
+                            val aGY = aGYRaw.takeIf { it.isFinite() } ?: headGY
+                            val aEle = aheadSample.ele.takeIf { it.isFinite() } ?: minEle
+                            val aLift = if (hasRelief) {
+                                (((aEle - minEle) / eleSpan).toFloat().coerceIn(0f, 1f)) * maxLiftPx
                             } else 0f
-                            val headGround = Offset(headGX, headGY)
-                            val headOffset = Offset(headGX + upX * headLift, headGY + upY * headLift)
-
-                            val activePath = Path().apply {
-                                moveTo(liftedPts.first().x, liftedPts.first().y)
-                                val maxSeg = currentSample.segmentIndex.coerceIn(0, liftedPts.lastIndex)
-                                for (i in 1..maxSeg) {
-                                    lineTo(liftedPts[i].x, liftedPts[i].y)
-                                }
-                                lineTo(headOffset.x, headOffset.y)
-                            }
-
-                            drawPath(
-                                activePath,
-                                Color.Black.copy(alpha = if (darkTheme) 0.50f else 0.25f),
-                                style = Stroke(width = 14f, cap = StrokeCap.Round, join = StrokeJoin.Round)
-                            )
-                            drawPath(
-                                activePath,
-                                VeloOrange.copy(alpha = 0.34f),
-                                style = Stroke(width = 18f, cap = StrokeCap.Round, join = StrokeJoin.Round)
-                            )
-                            drawPath(
-                                activePath,
-                                VeloOrange,
-                                style = Stroke(width = if (isCinematic) 8f else 7f, cap = StrokeCap.Round, join = StrokeJoin.Round)
-                            )
-
-                            if (isCinematic) {
-                                drawPath(
-                                    activePath,
-                                    Color(0xAAFFF3E0),
-                                    style = Stroke(width = 2.5f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                            val dx = (aGX + upX * aLift) - headOffset.x
+                            val dy = (aGY + upY * aLift) - headOffset.y
+                            val len = hypot(dx, dy)
+                            if (len.isFinite() && len > 2f) {
+                                drawLine(
+                                    color = SignalCyan.copy(alpha = 0.65f),
+                                    start = headOffset,
+                                    end = Offset(headOffset.x + (dx / len) * 34f, headOffset.y + (dy / len) * 34f),
+                                    strokeWidth = 3.5f,
+                                    cap = StrokeCap.Round
                                 )
-                                val aheadSample = FlyoverVideoExporter.interpolateSample(
-                                    points,
-                                    cumulativeDistances,
-                                    (progress + 0.025f).coerceIn(0f, 1f)
-                                )
-                                val (aGXRaw, aGYRaw) = MapProjection.project(
-                                    aheadSample.lat,
-                                    aheadSample.lng,
-                                    activeViewport,
-                                    size.width,
-                                    size.height
-                                )
-                                val aGX = aGXRaw.takeIf { it.isFinite() } ?: headGX
-                                val aGY = aGYRaw.takeIf { it.isFinite() } ?: headGY
-                                val aLift = if (hasRelief) {
-                                    (((aheadSample.ele - minEle) / eleSpan).toFloat().coerceIn(0f, 1f)) * maxLiftPx
-                                } else 0f
-                                val dx = (aGX + upX * aLift) - headOffset.x
-                                val dy = (aGY + upY * aLift) - headOffset.y
-                                val len = hypot(dx, dy)
-                                if (len.isFinite() && len > 2f) {
-                                    drawLine(
-                                        color = SignalCyan.copy(alpha = 0.65f),
-                                        start = headOffset,
-                                        end = Offset(headOffset.x + (dx / len) * 34f, headOffset.y + (dy / len) * 34f),
-                                        strokeWidth = 3.5f,
-                                        cap = StrokeCap.Round
-                                    )
-                                }
                             }
-
-                            drawCircle(EmeraldPeak, radius = 8.5f, center = liftedPts.first())
-                            drawCircle(Color.White, radius = 3.5f, center = liftedPts.first())
-                            if (progress >= 0.99f) {
-                                drawCircle(CrimsonPulse, radius = 9.5f, center = liftedPts.last())
-                                drawCircle(Color.White, radius = 4f, center = liftedPts.last())
-                            }
-
-                            if (isCinematic && headLift > 2f) {
-                                drawCircle(Color.Black.copy(alpha = 0.45f), radius = 8f, center = headGround)
-                                drawLine(SignalCyan.copy(alpha = 0.65f), headGround, headOffset, strokeWidth = 2.5f)
-                            }
-
-                            drawCircle(SignalCyan.copy(alpha = 0.28f), radius = 22f, center = headOffset)
-                            drawCircle(VeloOrange, radius = 12f, center = headOffset)
-                            drawCircle(Color.White, radius = 5f, center = headOffset)
                         }
+
+                        drawCircle(EmeraldPeak, radius = 8.5f, center = liftedPts.first())
+                        drawCircle(Color.White, radius = 3.5f, center = liftedPts.first())
+                        if (progress >= 0.99f) {
+                            drawCircle(CrimsonPulse, radius = 9.5f, center = liftedPts.last())
+                            drawCircle(Color.White, radius = 4f, center = liftedPts.last())
+                        }
+
+                        if (isCinematic && headLift > 2f) {
+                            drawCircle(Color.Black.copy(alpha = 0.45f), radius = 8f, center = headGround)
+                            drawLine(SignalCyan.copy(alpha = 0.65f), headGround, headOffset, strokeWidth = 2.5f)
+                        }
+
+                        drawCircle(SignalCyan.copy(alpha = 0.28f), radius = 22f, center = headOffset)
+                        drawCircle(VeloOrange, radius = 12f, center = headOffset)
+                        drawCircle(Color.White, radius = 5f, center = headOffset)
                     }
                 }
 
@@ -731,14 +810,24 @@ fun FlyoverMapAnimator(
                             .align(Alignment.BottomStart)
                             .padding(6.dp)
                     ) {
-                        Text(
-                            text = if (isCinematic) "VELOSTRIDE • CINEMATIC 3D" else "VELOSTRIDE",
-                            fontSize = 8.sp,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = 0.8.sp,
-                            color = if (isCinematic) SignalCyan else VeloOrange,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                        ) {
+                            VeloStrideWordmark(
+                                fontSize = 10.sp,
+                                onDarkSurface = true
+                            )
+                            if (isCinematic) {
+                                Text(
+                                    text = "• 3D",
+                                    fontSize = 8.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = SignalCyan
+                                )
+                            }
+                        }
                     }
                 }
 

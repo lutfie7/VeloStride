@@ -60,6 +60,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavType
@@ -74,6 +75,7 @@ import com.example.data.model.AthleteProfile
 import com.example.data.model.SportType
 import com.example.data.model.UiState
 import com.example.ui.components.SportSelectorGrid
+import com.example.ui.components.VeloStrideWordmark
 import com.example.ui.screens.ActivityDetailScreen
 import com.example.ui.screens.FeedScreen
 import com.example.ui.screens.ManualWorkoutDialog
@@ -157,13 +159,12 @@ fun MainScaffold(
                 if (!isDetailScreen) {
                     TopAppBar(
                         title = {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = stringResource(R.string.app_name),
-                                    style = MaterialTheme.typography.titleLarge,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
+                            VeloStrideWordmark(
+                                fontSize = 22.sp,
+                                onDarkSurface = isDarkTheme,
+                                showCrest = true,
+                                crestSize = 22.dp
+                            )
                         },
                         actions = {
                             IconButton(
