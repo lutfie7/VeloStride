@@ -18,20 +18,25 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.CallEnd
+import androidx.compose.material.icons.rounded.DirectionsBike
 import androidx.compose.material.icons.rounded.DirectionsRun
 import androidx.compose.material.icons.rounded.EmojiEvents
 import androidx.compose.material.icons.rounded.FitnessCenter
 import androidx.compose.material.icons.rounded.GraphicEq
+import androidx.compose.material.icons.rounded.Hiking
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.Psychology
 import androidx.compose.material.icons.rounded.Send
+import androidx.compose.material.icons.rounded.Watch
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
@@ -67,6 +72,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.core.Formatters
+import com.example.data.model.GearCategory
 import com.example.data.model.SportType
 import com.example.data.model.UiState
 import com.example.data.model.VoiceCoachStatus
@@ -236,7 +242,7 @@ fun ProgressScreen(viewModel: MainViewModel) {
             }
         }
 
-        // 3. Recovery Readiness & Huawei Band Sleep Architecture
+        // 3. Recovery Readiness & Wearable Sleep Architecture
         item {
             val recoveryColor = when {
                 analytics.recoveryScore >= 75 -> EmeraldPeak
@@ -692,7 +698,14 @@ fun ProgressScreen(viewModel: MainViewModel) {
         }
 
         items(gearList, key = { it.id }) { gear ->
+            val category = gear.parsedCategory
             val pct = (gear.distanceMeters / gear.maxDistanceMeters.coerceAtLeast(1.0)).toFloat().coerceIn(0f, 1f)
+            val gearIcon = when {
+                category == GearCategory.HIKING_SHOES || category == GearCategory.TRAIL_RUN_SHOES -> Icons.Rounded.Hiking
+                category.isBike -> Icons.Rounded.DirectionsBike
+                category == GearCategory.WEARABLE_SENSOR -> Icons.Rounded.Watch
+                else -> Icons.Rounded.DirectionsRun
+            }
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 shape = RoundedCornerShape(16.dp)
@@ -703,17 +716,35 @@ fun ProgressScreen(viewModel: MainViewModel) {
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                text = "${gear.brand} ${gear.name}",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = "${gear.gearType} • ${Formatters.formatDistanceKm(gear.distanceMeters)} / ${Formatters.formatDistanceKm(gear.maxDistanceMeters)}",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Surface(
+                                color = SignalCyan.copy(alpha = 0.14f),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.size(38.dp)
+                            ) {
+                                Icon(
+                                    imageVector = gearIcon,
+                                    contentDescription = category.label,
+                                    tint = SignalCyan,
+                                    modifier = Modifier.padding(8.dp)
+                                )
+                            }
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    text = "${gear.brand} ${gear.name}",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "${category.label} • ${Formatters.formatDistanceKm(gear.distanceMeters)} / ${Formatters.formatDistanceKm(gear.maxDistanceMeters)}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                         TextButton(
                             onClick = { viewModel.toggleGearRetired(gear) },
@@ -758,6 +789,7 @@ fun ProgressScreen(viewModel: MainViewModel) {
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun AddGearDialog(
     onDismiss: () -> Unit,
@@ -765,39 +797,52 @@ private fun AddGearDialog(
 ) {
     var name by remember { mutableStateOf("") }
     var brand by remember { mutableStateOf("") }
-    var type by remember { mutableStateOf("SHOES") }
-    var maxKm by remember { mutableStateOf("650") }
+    var selectedCategory by remember { mutableStateOf(GearCategory.RUNNING_SHOES) }
+    var maxKm by remember { mutableStateOf(GearCategory.RUNNING_SHOES.defaultMaxKm.toInt().toString()) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Add Gear") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(
-                        selected = type == "SHOES",
-                        onClick = { type = "SHOES"; maxKm = "650" },
-                        label = { Text("Running Shoes") }
-                    )
-                    FilterChip(
-                        selected = type == "BIKE",
-                        onClick = { type = "BIKE"; maxKm = "5000" },
-                        label = { Text("Bicycle") }
-                    )
+            Column(
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.verticalScroll(rememberScrollState())
+            ) {
+                Text("Gear Type", style = MaterialTheme.typography.labelLarge)
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    GearCategory.entries.forEach { category ->
+                        FilterChip(
+                            selected = selectedCategory == category,
+                            onClick = {
+                                selectedCategory = category
+                                maxKm = category.defaultMaxKm.toInt().toString()
+                            },
+                            label = { Text(category.label, maxLines = 1) },
+                            modifier = Modifier.testTag("gear_type_${category.name.lowercase()}")
+                        )
+                    }
                 }
                 OutlinedTextField(
                     value = brand,
                     onValueChange = { brand = it },
-                    label = { Text("Brand (e.g., Nike, Canyon)") },
+                    label = { Text("Brand (e.g., Nike, Salomon, Hoka, Canyon)") },
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("gear_brand_input")
                 )
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
                     label = { Text("Model Name") },
+                    placeholder = { Text(selectedCategory.defaultModelName) },
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("gear_model_input")
                 )
                 OutlinedTextField(
                     value = maxKm,
@@ -805,7 +850,9 @@ private fun AddGearDialog(
                     label = { Text("Retirement Threshold (km)") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("gear_threshold_input")
                 )
             }
         },
@@ -813,10 +860,10 @@ private fun AddGearDialog(
             Button(
                 onClick = {
                     onSave(
-                        name.ifBlank { if (type == "BIKE") "Road Bike" else "Daily Trainer" },
+                        name.ifBlank { selectedCategory.defaultModelName },
                         brand.ifBlank { "Athletic" },
-                        type,
-                        maxKm.toDoubleOrNull() ?: 650.0
+                        selectedCategory.name,
+                        maxKm.toDoubleOrNull() ?: selectedCategory.defaultMaxKm
                     )
                 },
                 modifier = Modifier.testTag("confirm_add_gear_btn")

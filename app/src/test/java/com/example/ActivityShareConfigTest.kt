@@ -30,7 +30,7 @@ class ActivityShareConfigTest {
             maxHeartRate = 180,
             calories = 680,
             relativeEffort = 112,
-            deviceName = "HUAWEI Band 11 Pro"
+            deviceName = "Wearable Device"
         )
 
         val minimalConfig = ShareCardConfig(
@@ -55,7 +55,7 @@ class ActivityShareConfigTest {
         assertFalse(summary.contains("Heart Rate:"))
         assertFalse(summary.contains("Calories:"))
         assertFalse(summary.contains("Relative Effort:"))
-        assertFalse(summary.contains("HUAWEI Band 11 Pro"))
+        assertFalse(summary.contains("Wearable Device"))
     }
 
     @Test

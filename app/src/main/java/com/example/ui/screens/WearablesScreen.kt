@@ -132,7 +132,7 @@ fun WearablesScreen(viewModel: MainViewModel) {
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-        // 1. Native HUAWEI Band 11 Pro Pairing Hero
+        // 1. Native Wearable Device Pairing Hero
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -146,7 +146,7 @@ fun WearablesScreen(viewModel: MainViewModel) {
                     ) {
                         Image(
                             painter = painterResource(R.drawable.img_band_huawei_guide),
-                            contentDescription = "HUAWEI Band 11 Pro BLE and Health Connect pairing guide",
+                            contentDescription = "Wearable Device BLE and Health Connect pairing guide",
                             contentScale = ContentScale.Crop,
                             modifier = Modifier.fillMaxSize()
                         )
@@ -170,7 +170,7 @@ fun WearablesScreen(viewModel: MainViewModel) {
                                 color = SignalCyan
                             )
                             Text(
-                                text = "HUAWEI Band 11 Pro",
+                                text = "Wearable Device",
                                 style = MaterialTheme.typography.headlineMedium,
                                 color = Color.White,
                                 fontWeight = FontWeight.Bold
@@ -181,12 +181,12 @@ fun WearablesScreen(viewModel: MainViewModel) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text("Setup Checklist for Real-Time Sync:", style = MaterialTheme.typography.labelLarge)
                         Text(
-                            "1. On HUAWEI Band 11 Pro: Settings -> Workout -> Heart Rate Broadcast -> ON for real-time BLE GATT BPM, HRV & Running Cadence.",
+                            "1. On your Wearable Device: Settings -> Workout -> Heart Rate Broadcast -> ON for real-time BLE GATT BPM, HRV & Running Cadence.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Text(
-                            "2. In Huawei Health app: Me -> Privacy Management -> Data Sharing -> enable Health Connect for daily Steps, Calories & Sleep Stages.",
+                            "2. In your Wearable Companion app: Privacy / Data Sharing -> enable Health Connect for daily Steps, Calories & Sleep Stages.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -442,7 +442,7 @@ fun WearablesScreen(viewModel: MainViewModel) {
                                     Spacer(Modifier.width(6.dp))
                                     Surface(color = VeloOrange.copy(alpha = 0.2f), shape = RoundedCornerShape(6.dp)) {
                                         Text(
-                                            "HUAWEI",
+                                            "WEARABLE",
                                             style = MaterialTheme.typography.labelSmall,
                                             color = VeloOrange,
                                             fontWeight = FontWeight.Bold,
@@ -545,7 +545,7 @@ fun WearablesScreen(viewModel: MainViewModel) {
                                     strokeWidth = 2.dp
                                 )
                                 Spacer(Modifier.width(6.dp))
-                                Text("Syncing Band...")
+                                Text("Syncing Wearable...")
                             } else {
                                 Icon(Icons.Rounded.Sync, contentDescription = null, modifier = Modifier.size(18.dp))
                                 Spacer(Modifier.width(6.dp))
@@ -554,7 +554,7 @@ fun WearablesScreen(viewModel: MainViewModel) {
                                         HealthConnectState.AVAILABLE_NEEDS_PERMISSION -> "Grant Permissions & Sync"
                                         HealthConnectState.UNAVAILABLE -> "Health Connect Unavailable"
                                         HealthConnectState.UPDATE_REQUIRED -> "Update Health Connect"
-                                        else -> "Sync Band Workouts & Health"
+                                        else -> "Sync Wearable Workouts & Health"
                                     }
                                 )
                             }

@@ -145,6 +145,7 @@ data class WorkoutActivity(
     val externalId: String? = null,
     val aiInsight: String? = null,
     val notes: String? = null,
+    val mediaUris: List<String> = emptyList(),
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null,
 ) {
@@ -178,6 +179,32 @@ data class SavedRoute(
         get() = waypoints.map { TrackPoint.fromMap(it) }
 }
 
+enum class GearCategory(
+    val label: String,
+    val defaultMaxKm: Double,
+    val defaultModelName: String,
+    val isShoes: Boolean,
+    val isBike: Boolean = false,
+) {
+    RUNNING_SHOES("Running Shoes", 650.0, "Daily Trainer", true),
+    TRAIL_RUN_SHOES("Trail Run Shoes", 600.0, "Trail Runner", true),
+    HIKING_SHOES("Hiking Shoes", 800.0, "Trail Hiker", true),
+    WALKING_SHOES("Walking Shoes", 700.0, "Walking Sneaker", true),
+    TRACK_SPIKES("Track Spikes", 300.0, "Track Spike", true),
+    ROAD_BIKE("Road Bike", 5000.0, "Road Bike", false, isBike = true),
+    GRAVEL_BIKE("Gravel Bike", 4500.0, "Gravel Bike", false, isBike = true),
+    MTB_BIKE("Mountain Bike", 3500.0, "Mountain Bike", false, isBike = true),
+    WEARABLE_SENSOR("Wearable / Sensor", 10000.0, "Wearable Sensor", false);
+
+    companion object {
+        fun fromRaw(raw: String): GearCategory = when (raw.trim().uppercase()) {
+            "SHOES" -> RUNNING_SHOES
+            "BIKE" -> ROAD_BIKE
+            else -> entries.firstOrNull { it.name == raw.trim().uppercase() } ?: RUNNING_SHOES
+        }
+    }
+}
+
 @Keep
 @IgnoreExtraProperties
 data class GearItem(
@@ -185,14 +212,17 @@ data class GearItem(
     val userId: String = "",
     val name: String = "",
     val brand: String = "",
-    val gearType: String = "SHOES",
+    val gearType: String = GearCategory.RUNNING_SHOES.name,
     val distanceMeters: Double = 0.0,
     val maxDistanceMeters: Double = 650000.0,
     val primaryGear: Boolean = false,
     val retired: Boolean = false,
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null,
-)
+) {
+    val parsedCategory: GearCategory
+        get() = GearCategory.fromRaw(gearType)
+}
 
 @Keep
 @IgnoreExtraProperties
@@ -269,7 +299,7 @@ data class DailyHealthLog(
     val sleepScore: Int = 0,
     val vo2MaxEstimate: Double = 0.0,
     val recoveryScore: Int = 0,
-    val sourceDevice: String = "HUAWEI Band 11 Pro",
+    val sourceDevice: String = "Wearable Device",
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null,
 )
@@ -336,7 +366,7 @@ data class BleDeviceCandidate(
 
 data class BleTelemetryState(
     val status: BleConnectionStatus = BleConnectionStatus.DISCONNECTED,
-    val statusMessage: String = "Ready to scan for HUAWEI Band 11 Pro or BLE sensors",
+    val statusMessage: String = "Ready to scan for Wearable Device or BLE sensors",
     val isScanning: Boolean = false,
     val autoReconnectEnabled: Boolean = true,
     val showAllBleDevices: Boolean = false,
@@ -404,7 +434,7 @@ data class HealthConnectSnapshot(
     val sleepAwakeMinutes: Int = 0,
     val importedExercises: List<ImportedExerciseSession> = emptyList(),
     val dataOriginPackage: String = "",
-    val lastSyncMessage: String = "Tap Sync Health Connect to pull Huawei Health & Band 11 Pro records",
+    val lastSyncMessage: String = "Tap Sync Health Connect to pull Wearable Device & Health Connect records",
 )
 
 enum class WorkoutSortOrder(val label: String) {
@@ -432,6 +462,8 @@ data class WorkoutSessionSummary(
     val deviceName: String?,
     val gearName: String?,
     val hasAiInsight: Boolean,
+    val mediaCount: Int = 0,
+    val privateActivity: Boolean = false,
     val routePoints: List<TrackPoint>,
     val timestampMs: Long,
     val sourceActivity: WorkoutActivity,
@@ -459,6 +491,8 @@ fun WorkoutActivity.toSessionSummary(): WorkoutSessionSummary = WorkoutSessionSu
     deviceName = deviceName,
     gearName = gearName,
     hasAiInsight = !aiInsight.isNullOrBlank(),
+    mediaCount = mediaUris.size,
+    privateActivity = privateActivity,
     routePoints = decodedPoints,
     timestampMs = createdAt?.toDate()?.time ?: 0L,
     sourceActivity = this

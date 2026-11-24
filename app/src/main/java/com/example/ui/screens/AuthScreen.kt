@@ -22,7 +22,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AutoAwesome
-import androidx.compose.material.icons.rounded.BluetoothConnected
 import androidx.compose.material.icons.rounded.Route
 import androidx.compose.material.icons.rounded.Watch
 import androidx.compose.material3.Button
@@ -156,7 +155,7 @@ fun AuthScreen(
                 )
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    text = "Track Run, Hike, Walk, Trail Run, Cycle & Workout sessions with live VO2 Max, training load, recovery readiness, and native HUAWEI Band 11 Pro pairing.",
+                    text = "Track Run, Hike, Walk, Trail Run, Cycle & Workout sessions with live VO2 Max, training load, recovery readiness, and native Wearable Device pairing.",
                     style = MaterialTheme.typography.bodyLarge,
                     color = Color(0xFFB8C2D1)
                 )
@@ -165,7 +164,7 @@ fun AuthScreen(
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     FeatureHighlightRow(
                         icon = Icons.Rounded.Watch,
-                        title = "Native HUAWEI Band 11 Pro Pairing",
+                        title = "Native Wearable Device Pairing",
                         subtitle = "Real-time BLE Heart Rate, HRV, Steps, Calories & Sleep Sync",
                         accent = SignalCyan
                     )
@@ -241,12 +240,6 @@ fun AuthScreen(
                             strokeWidth = 2.5.dp
                         )
                     } else {
-                        Icon(
-                            imageVector = Icons.Rounded.BluetoothConnected,
-                            contentDescription = null,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Spacer(Modifier.width(10.dp))
                         Text(
                             text = stringResource(R.string.sign_in_google),
                             style = MaterialTheme.typography.titleMedium,

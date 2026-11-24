@@ -7,6 +7,7 @@ import com.example.core.handleFirestoreError
 import com.example.data.model.AthleteProfile
 import com.example.data.model.ChallengeGoal
 import com.example.data.model.DailyHealthLog
+import com.example.data.model.GearCategory
 import com.example.data.model.GearItem
 import com.example.data.model.PairedWearable
 import com.example.data.model.SavedRoute
@@ -204,6 +205,10 @@ class VeloStrideRepository(
             workout.externalId?.takeIf { it.isNotBlank() }?.let { payload["externalId"] = it.take(128) }
             workout.aiInsight?.takeIf { it.isNotBlank() }?.let { payload["aiInsight"] = it.take(2500) }
             workout.notes?.takeIf { it.isNotBlank() }?.let { payload["notes"] = it.take(500) }
+            val safeMedia = workout.mediaUris.map { it.trim() }.filter { it.isNotBlank() }.take(10).map { it.take(500) }
+            if (safeMedia.isNotEmpty()) {
+                payload["mediaUris"] = safeMedia
+            }
 
             docRef.set(payload).await()
 
@@ -308,6 +313,81 @@ class VeloStrideRepository(
         }
     }
 
+    suspend fun updateWorkout(
+        userId: String,
+        existing: WorkoutActivity,
+        title: String,
+        sportType: SportType,
+        gear: GearItem?,
+        perceivedExertion: Int,
+        privateActivity: Boolean,
+        notes: String?,
+        mediaUris: List<String>,
+    ): Result<Unit> {
+        val path = "users/$userId/workouts/${existing.id}"
+        return try {
+            val uid = requireUserId()
+            check(uid == userId && existing.id.isNotBlank())
+            val safeMedia = mediaUris.map { it.trim() }.filter { it.isNotBlank() }.take(10).map { it.take(500) }
+            val cleanTitle = title.trim().ifBlank { "${sportType.label} Session" }.take(120)
+            val cleanNotes = notes?.trim()?.takeIf { it.isNotBlank() }?.take(500)
+            val newGearId = gear?.id?.takeIf { it.isNotBlank() }?.take(128)
+            val newGearName = gear?.name?.takeIf { it.isNotBlank() }?.take(80)
+
+            val payload = mutableMapOf<String, Any>(
+                "title" to cleanTitle,
+                "sportType" to sportType.name,
+                "perceivedExertion" to perceivedExertion.coerceIn(1, 10),
+                "privateActivity" to privateActivity,
+                "mediaUris" to safeMedia,
+                "updatedAt" to FieldValue.serverTimestamp()
+            )
+            payload["notes"] = cleanNotes ?: FieldValue.delete()
+            payload["gearId"] = newGearId ?: FieldValue.delete()
+            payload["gearName"] = newGearName ?: FieldValue.delete()
+
+            userDoc(uid).collection("workouts").document(existing.id).update(payload).await()
+
+            // Reconcile gear mileage if gear selection changed
+            val oldGearId = existing.gearId?.takeIf { it.isNotBlank() }
+            if (oldGearId != newGearId && existing.distanceMeters > 0.0) {
+                if (oldGearId != null) {
+                    runCatching {
+                        val oldRef = userDoc(uid).collection("gear").document(oldGearId)
+                        val oldSnap = oldRef.get().await()
+                        if (oldSnap.exists()) {
+                            val currentDist = oldSnap.getDouble("distanceMeters") ?: 0.0
+                            val decremented = (currentDist - existing.distanceMeters).coerceAtLeast(0.0)
+                            oldRef.update(
+                                mapOf(
+                                    "distanceMeters" to decremented,
+                                    "updatedAt" to FieldValue.serverTimestamp()
+                                )
+                            ).await()
+                        }
+                    }
+                }
+                if (newGearId != null) {
+                    runCatching {
+                        userDoc(uid).collection("gear").document(newGearId).update(
+                            mapOf(
+                                "distanceMeters" to FieldValue.increment(existing.distanceMeters),
+                                "updatedAt" to FieldValue.serverTimestamp()
+                            )
+                        ).await()
+                    }
+                }
+            }
+
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, path)
+            Result.failure(e)
+        }
+    }
+
     suspend fun deleteWorkout(userId: String, workoutId: String): Result<Unit> {
         val path = "users/$userId/workouts/$workoutId"
         return try {
@@ -403,12 +483,13 @@ class VeloStrideRepository(
             check(uid == userId)
             val docRef = userDoc(uid).collection("gear").document()
             path = docRef.path
+            val category = GearCategory.fromRaw(gear.gearType)
             docRef.set(
                 mapOf(
                     "userId" to uid,
-                    "name" to gear.name.trim().ifBlank { "Running Shoes" }.take(80),
+                    "name" to gear.name.trim().ifBlank { category.defaultModelName }.take(80),
                     "brand" to gear.brand.trim().ifBlank { "Athletic" }.take(60),
-                    "gearType" to if (gear.gearType == "BIKE") "BIKE" else "SHOES",
+                    "gearType" to category.name,
                     "distanceMeters" to gear.distanceMeters.coerceIn(0.0, 100_000_000.0),
                     "maxDistanceMeters" to gear.maxDistanceMeters.coerceIn(1000.0, 100_000_000.0),
                     "primaryGear" to gear.primaryGear,
@@ -480,10 +561,10 @@ class VeloStrideRepository(
                 docRef.set(
                     mapOf(
                         "userId" to uid,
-                        "name" to device.name.trim().ifBlank { "BLE Wearable" }.take(80),
+                        "name" to device.name.trim().ifBlank { "Wearable Device" }.take(80),
                         "macAddress" to device.macAddress.trim().ifBlank { "UNKNOWN" }.take(40),
                         "manufacturer" to device.manufacturer.trim().ifBlank { "Standard BLE" }.take(60),
-                        "deviceCategory" to device.deviceCategory.trim().ifBlank { "Smartband" }.take(40),
+                        "deviceCategory" to device.deviceCategory.trim().ifBlank { "Wearable Device" }.take(40),
                         "batteryPercent" to device.batteryPercent.coerceIn(-1, 100),
                         "supportsHr" to device.supportsHr,
                         "supportsRsc" to device.supportsRsc,
@@ -664,7 +745,7 @@ class VeloStrideRepository(
                         "sleepScore" to log.sleepScore.coerceIn(0, 100),
                         "vo2MaxEstimate" to log.vo2MaxEstimate.coerceIn(0.0, 100.0),
                         "recoveryScore" to log.recoveryScore.coerceIn(0, 100),
-                        "sourceDevice" to log.sourceDevice.trim().ifBlank { "HUAWEI Band 11 Pro" }.take(80),
+                        "sourceDevice" to log.sourceDevice.trim().ifBlank { "Wearable Device" }.take(80),
                         "updatedAt" to FieldValue.serverTimestamp()
                     )
                 ).await()
@@ -689,7 +770,7 @@ class VeloStrideRepository(
                         "sleepScore" to log.sleepScore.coerceIn(0, 100),
                         "vo2MaxEstimate" to log.vo2MaxEstimate.coerceIn(0.0, 100.0),
                         "recoveryScore" to log.recoveryScore.coerceIn(0, 100),
-                        "sourceDevice" to log.sourceDevice.trim().ifBlank { "HUAWEI Band 11 Pro" }.take(80),
+                        "sourceDevice" to log.sourceDevice.trim().ifBlank { "Wearable Device" }.take(80),
                         "createdAt" to FieldValue.serverTimestamp(),
                         "updatedAt" to FieldValue.serverTimestamp()
                     )

@@ -33,12 +33,15 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.AspectRatio
 import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.FileDownload
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Image
+import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Palette
+import androidx.compose.material.icons.rounded.PhotoLibrary
 import androidx.compose.material.icons.rounded.PlayCircle
 import androidx.compose.material.icons.rounded.Route
 import androidx.compose.material.icons.rounded.Share
@@ -214,6 +217,7 @@ fun PastWorkoutSessionCard(
     onClick: () -> Unit,
     onToggleKudos: () -> Unit,
     onShare: () -> Unit,
+    onEdit: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     Card(
@@ -359,6 +363,38 @@ fun PastWorkoutSessionCard(
                             )
                         }
                     }
+                    if (session.mediaCount > 0) {
+                        Surface(
+                            color = SignalCyan.copy(alpha = 0.14f),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.PhotoLibrary,
+                                    contentDescription = "${session.mediaCount} photos",
+                                    tint = SignalCyan,
+                                    modifier = Modifier.size(13.dp)
+                                )
+                                Spacer(Modifier.width(3.dp))
+                                Text(
+                                    text = "${session.mediaCount}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = SignalCyan
+                                )
+                            }
+                        }
+                    }
+                    if (session.privateActivity) {
+                        Icon(
+                            imageVector = Icons.Rounded.Lock,
+                            contentDescription = "Private activity",
+                            tint = VeloOrange,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
                     if (session.hasAiInsight) {
                         Icon(
                             imageVector = Icons.Rounded.AutoAwesome,
@@ -370,6 +406,18 @@ fun PastWorkoutSessionCard(
                 }
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (onEdit != null) {
+                        IconButton(
+                            onClick = onEdit,
+                            modifier = Modifier.testTag("edit_activity_btn_${session.id}")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Edit,
+                                contentDescription = "Edit Activity",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
                     IconButton(
                         onClick = onShare,
                         modifier = Modifier.testTag("share_activity_btn_${session.id}")

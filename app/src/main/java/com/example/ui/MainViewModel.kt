@@ -182,12 +182,12 @@ class MainViewModel(
                         currentUserId,
                         PairedWearable(
                             userId = currentUserId,
-                            name = ble.connectedDeviceName ?: "HUAWEI Band 11 Pro",
+                            name = ble.connectedDeviceName ?: "Wearable Device",
                             macAddress = mac,
                             manufacturer = ble.deviceManufacturer.ifBlank {
-                                if (ble.isHuaweiNative) "Huawei Technologies" else "Standard BLE"
+                                if (ble.isHuaweiNative) "Wearable Device BLE" else "Standard BLE"
                             },
-                            deviceCategory = if (ble.isHuaweiNative) "Huawei Smartband" else "BLE Sensor",
+                            deviceCategory = if (ble.isHuaweiNative) "Wearable Device" else "BLE Sensor",
                             batteryPercent = ble.batteryPercent,
                             supportsHr = ble.liveHeartRateBpm > 0 || ble.discoveredServices.any { it.contains("Heart Rate") },
                             supportsRsc = ble.discoveredServices.any { it.contains("Running Speed") },
@@ -262,7 +262,7 @@ class MainViewModel(
 
                     val msg = when {
                         batch.newlyImportedCount > 0 ->
-                            "${hc.lastSyncMessage} • Imported ${batch.newlyImportedCount} Band workout(s) with DEM elevation!"
+                            "${hc.lastSyncMessage} • Imported ${batch.newlyImportedCount} Wearable workout(s) with DEM elevation!"
                         !silentIfNoNewWorkouts -> hc.lastSyncMessage
                         else -> null
                     }
@@ -309,7 +309,7 @@ class MainViewModel(
                     sleepScore = analytics.sleepScore,
                     vo2MaxEstimate = hc.vo2MaxFromBand.takeIf { it > 10.0 } ?: analytics.vo2Max,
                     recoveryScore = analytics.recoveryScore,
-                    sourceDevice = ble.connectedDeviceName ?: "HUAWEI Band 11 Pro"
+                    sourceDevice = ble.connectedDeviceName ?: "Wearable Device"
                 )
             )
             if (res.isSuccess) {
@@ -451,6 +451,37 @@ class MainViewModel(
     fun toggleKudos(workout: WorkoutActivity) {
         viewModelScope.launch {
             repository.toggleKudos(currentUserId, workout)
+        }
+    }
+
+    fun updateWorkout(
+        existing: WorkoutActivity,
+        title: String,
+        sportType: SportType,
+        gear: GearItem?,
+        perceivedExertion: Int,
+        privateActivity: Boolean,
+        notes: String?,
+        mediaUris: List<String>,
+        onUpdated: () -> Unit = {},
+    ) {
+        viewModelScope.launch {
+            repository.updateWorkout(
+                userId = currentUserId,
+                existing = existing,
+                title = title,
+                sportType = sportType,
+                gear = gear,
+                perceivedExertion = perceivedExertion,
+                privateActivity = privateActivity,
+                notes = notes,
+                mediaUris = mediaUris
+            ).onSuccess {
+                _events.emit("Activity updated")
+                onUpdated()
+            }.onFailure { err ->
+                _events.emit("Failed to update activity: ${err.localizedMessage}")
+            }
         }
     }
 
@@ -1018,7 +1049,7 @@ class MainViewModel(
                         SplitKm(km, 276 - (km % 3) * 4, 6.8, 155 + km * 2).toMap()
                     },
                     gearName = "Vaporfly 3 Carbon",
-                    deviceName = "HUAWEI Band 11 Pro"
+                    deviceName = "Wearable Device"
                 ),
                 WorkoutActivity(
                     userId = currentUserId,
@@ -1043,7 +1074,7 @@ class MainViewModel(
                     splits = (1..8).map { km ->
                         SplitKm(km * 5, 118 + (km % 2) * 5, 60.0, 148 + km * 2).toMap()
                     },
-                    deviceName = "HUAWEI Band 11 Pro"
+                    deviceName = "Wearable Device"
                 ),
                 WorkoutActivity(
                     userId = currentUserId,
@@ -1067,7 +1098,7 @@ class MainViewModel(
                     routePoints = loopPoints,
                     splits = (1..6).map { km -> SplitKm(km, 330 + km, 4.5, 138 + km).toMap() },
                     gearName = "Vaporfly 3 Carbon",
-                    deviceName = "HUAWEI Band 11 Pro"
+                    deviceName = "Wearable Device"
                 )
             )
             sampleWorkouts.forEach { repository.saveWorkout(currentUserId, it) }
@@ -1150,10 +1181,10 @@ class MainViewModel(
                     sleepScore = 88,
                     vo2MaxEstimate = 52.8,
                     recoveryScore = 86,
-                    sourceDevice = "HUAWEI Band 11 Pro (Sample Sync)"
+                    sourceDevice = "Wearable Device (Sample Sync)"
                 )
             )
-            _events.emit("Sample training block & Huawei Band sleep/VO2 data loaded!")
+            _events.emit("Sample training block & Wearable Device sleep/VO2 data loaded!")
         }
     }
 

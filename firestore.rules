@@ -81,6 +81,7 @@ service cloud.firestore {
         (!('externalId' in data) || (data.externalId is string && data.externalId.size() <= 128)) &&
         (!('aiInsight' in data) || (data.aiInsight is string && data.aiInsight.size() <= 2500)) &&
         (!('notes' in data) || (data.notes is string && data.notes.size() <= 500)) &&
+        (!('mediaUris' in data) || (data.mediaUris is list && data.mediaUris.size() <= 10 && (data.mediaUris.size() == 0 || (data.mediaUris[0] is string && data.mediaUris[0].size() <= 500)))) &&
         isValidTimestamp(data.createdAt) &&
         isValidTimestamp(data.updatedAt);
     }
@@ -104,7 +105,11 @@ service cloud.firestore {
       return data.userId == userId &&
         data.name is string && data.name.size() >= 1 && data.name.size() <= 80 &&
         data.brand is string && data.brand.size() >= 1 && data.brand.size() <= 60 &&
-        data.gearType in ['SHOES', 'BIKE'] &&
+        data.gearType in [
+          'SHOES', 'BIKE',
+          'RUNNING_SHOES', 'TRAIL_RUN_SHOES', 'HIKING_SHOES', 'WALKING_SHOES', 'TRACK_SPIKES',
+          'ROAD_BIKE', 'GRAVEL_BIKE', 'MTB_BIKE', 'WEARABLE_SENSOR'
+        ] &&
         data.distanceMeters is number && data.distanceMeters >= 0 && data.distanceMeters <= 100000000 &&
         data.maxDistanceMeters is number && data.maxDistanceMeters >= 1000 && data.maxDistanceMeters <= 100000000 &&
         data.primaryGear is bool &&
@@ -232,7 +237,7 @@ service cloud.firestore {
             'avgHeartRate', 'maxHeartRate', 'avgCadence', 'calories', 'relativeEffort',
             'perceivedExertion', 'kudosCount', 'kudosGiven', 'privateActivity', 'prCount',
             'hrZoneSeconds', 'routePoints', 'splits', 'gearId', 'gearName', 'deviceName',
-            'elevationSource', 'externalId', 'aiInsight', 'notes', 'createdAt', 'updatedAt'
+            'elevationSource', 'externalId', 'aiInsight', 'notes', 'mediaUris', 'createdAt', 'updatedAt'
           ]) &&
           isValidWorkoutActivity(incoming(), userId);
 
@@ -245,7 +250,7 @@ service cloud.firestore {
             incoming().diff(existing()).affectedKeys().hasOnly(['kudosCount', 'kudosGiven', 'updatedAt']) ||
             incoming().diff(existing()).affectedKeys().hasOnly(['aiInsight', 'updatedAt']) ||
             incoming().diff(existing()).affectedKeys().hasOnly(['elevationGainMeters', 'routePoints', 'splits', 'elevationSource', 'updatedAt']) ||
-            incoming().diff(existing()).affectedKeys().hasOnly(['title', 'notes', 'privateActivity', 'gearId', 'gearName', 'updatedAt'])
+            incoming().diff(existing()).affectedKeys().hasOnly(['title', 'sportType', 'perceivedExertion', 'notes', 'privateActivity', 'gearId', 'gearName', 'mediaUris', 'updatedAt'])
           );
 
         allow delete: if isOwner(userId) && isValidId(workoutId);
@@ -302,7 +307,7 @@ service cloud.firestore {
           incoming().userId == existing().userId &&
           incoming().createdAt == existing().createdAt &&
           isValidGearItem(incoming(), userId) &&
-          incoming().diff(existing()).affectedKeys().hasOnly(['distanceMeters', 'primaryGear', 'retired', 'name', 'maxDistanceMeters', 'updatedAt']);
+          incoming().diff(existing()).affectedKeys().hasOnly(['distanceMeters', 'primaryGear', 'retired', 'name', 'brand', 'gearType', 'maxDistanceMeters', 'updatedAt']);
 
         allow delete: if isOwner(userId) && isValidId(gearId);
       }

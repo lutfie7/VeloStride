@@ -18,6 +18,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -181,16 +183,16 @@ fun RecordScreen(
                         ) {
                             Icon(
                                 Icons.Rounded.Watch,
-                                contentDescription = "Huawei Band telemetry",
+                                contentDescription = "Wearable Device telemetry",
                                 tint = if (ble.status == BleConnectionStatus.CONNECTED) EmeraldPeak else MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.size(16.dp)
                             )
                             Spacer(Modifier.width(6.dp))
                             Text(
                                 text = if (ble.status == BleConnectionStatus.CONNECTED) {
-                                    ble.connectedDeviceName ?: "Band Live"
+                                    ble.connectedDeviceName ?: "Wearable Live"
                                 } else {
-                                    "Pair Band"
+                                    "Pair Wearable"
                                 },
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.SemiBold
@@ -533,12 +535,12 @@ private fun SaveRecordedWorkoutDialog(
                 )
                 if (gearOptions.isNotEmpty()) {
                     Text("Gear Used", style = MaterialTheme.typography.labelMedium)
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        gearOptions.take(3).forEach { gear ->
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        items(gearOptions, key = { it.id }) { gear ->
                             FilterChip(
                                 selected = selectedGear?.id == gear.id,
                                 onClick = { selectedGear = if (selectedGear?.id == gear.id) null else gear },
-                                label = { Text(gear.name, maxLines = 1) }
+                                label = { Text("${gear.name} (${gear.parsedCategory.label})", maxLines = 1) }
                             )
                         }
                     }
@@ -675,12 +677,12 @@ fun ManualWorkoutDialog(
                 }
                 if (gearOptions.isNotEmpty()) {
                     item {
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            gearOptions.take(2).forEach { gear ->
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            items(gearOptions, key = { it.id }) { gear ->
                                 FilterChip(
                                     selected = selectedGear?.id == gear.id,
                                     onClick = { selectedGear = if (selectedGear?.id == gear.id) null else gear },
-                                    label = { Text(gear.name, maxLines = 1) }
+                                    label = { Text("${gear.name} (${gear.parsedCategory.label})", maxLines = 1) }
                                 )
                             }
                         }

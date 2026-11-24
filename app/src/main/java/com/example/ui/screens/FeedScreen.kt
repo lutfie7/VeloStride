@@ -67,6 +67,7 @@ import com.example.data.model.WorkoutSortOrder
 import com.example.data.model.computeHistoryStats
 import com.example.data.model.toSessionSummary
 import com.example.ui.MainViewModel
+import com.example.ui.components.EditActivityDialog
 import com.example.ui.components.PastWorkoutHistorySummaryCard
 import com.example.ui.components.PastWorkoutSessionCard
 import com.example.ui.components.RecoveryGaugeRing
@@ -88,6 +89,7 @@ fun FeedScreen(
 ) {
     val profileState by viewModel.profileState.collectAsStateWithLifecycle()
     val workoutsState by viewModel.workoutsState.collectAsStateWithLifecycle()
+    val gearState by viewModel.gearState.collectAsStateWithLifecycle()
     val challengesState by viewModel.challengesState.collectAsStateWithLifecycle()
     val analytics by viewModel.analyticsState.collectAsStateWithLifecycle()
     val bleState by viewModel.bleState.collectAsStateWithLifecycle()
@@ -98,7 +100,9 @@ fun FeedScreen(
     var selectedFilter by remember { mutableStateOf<SportType?>(null) }
     var sortOrder by remember { mutableStateOf(WorkoutSortOrder.NEWEST) }
     var workoutToShare by remember { mutableStateOf<WorkoutActivity?>(null) }
+    var workoutToEdit by remember { mutableStateOf<WorkoutActivity?>(null) }
     var pendingExportWorkout by remember { mutableStateOf<WorkoutActivity?>(null) }
+    val gearOptions = (gearState as? UiState.Success)?.data.orEmpty()
 
     val importGpxLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
@@ -260,7 +264,7 @@ fun FeedScreen(
                                 Spacer(Modifier.width(6.dp))
                                 Column {
                                     Text(
-                                        text = if (bleState.status == BleConnectionStatus.CONNECTED) "BAND LIVE" else "BAND 11 PRO",
+                                        text = if (bleState.status == BleConnectionStatus.CONNECTED) "WEARABLE LIVE" else "WEARABLE",
                                         style = MaterialTheme.typography.labelSmall,
                                         color = if (bleState.status == BleConnectionStatus.CONNECTED) EmeraldPeak else MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -412,7 +416,7 @@ fun FeedScreen(
                                 )
                                 Spacer(Modifier.height(6.dp))
                                 Text(
-                                    text = "Start live GPS tracking with your HUAWEI Band 11 Pro, log an indoor workout manually, or load a sample training block to preview all analytics.",
+                                    text = "Start live GPS tracking with your Wearable Device, log an indoor workout manually, or load a sample training block to preview all analytics.",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -462,7 +466,8 @@ fun FeedScreen(
                             session = summary,
                             onClick = { onOpenWorkoutDetail(workout.id) },
                             onToggleKudos = { viewModel.toggleKudos(workout) },
-                            onShare = { workoutToShare = workout }
+                            onShare = { workoutToShare = workout },
+                            onEdit = { workoutToEdit = workout }
                         )
                     }
                 }
@@ -479,6 +484,35 @@ fun FeedScreen(
                 exportGpxLauncher.launch(GpxSerializer.suggestedGpxFileName(w.title))
             },
             onDismiss = { workoutToShare = null }
+        )
+    }
+
+    workoutToEdit?.let { w ->
+        EditActivityDialog(
+            workout = w,
+            gearOptions = gearOptions,
+            onDismiss = { workoutToEdit = null },
+            onSave = { title, sportType, gear, rpe, isPrivate, notes, mediaUris ->
+                workoutToEdit = null
+                viewModel.updateWorkout(
+                    existing = w,
+                    title = title,
+                    sportType = sportType,
+                    gear = gear,
+                    perceivedExertion = rpe,
+                    privateActivity = isPrivate,
+                    notes = notes,
+                    mediaUris = mediaUris
+                )
+            },
+            onExportGpx = {
+                pendingExportWorkout = w
+                exportGpxLauncher.launch(GpxSerializer.suggestedGpxFileName(w.title))
+            },
+            onDelete = {
+                workoutToEdit = null
+                viewModel.deleteWorkout(w.id) {}
+            }
         )
     }
 }

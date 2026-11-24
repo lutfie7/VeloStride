@@ -60,9 +60,9 @@ object BandSyncHelper {
                 hrZoneSeconds = session.hrZoneSeconds
             )
             val deviceLabel = if (session.sourcePackage.contains("huawei", true)) {
-                "HUAWEI Band 11 Pro"
+                "Wearable Device"
             } else {
-                "Smart Band / Health Connect"
+                "Wearable / Health Connect"
             }
             val storedPoints = GpxSerializer.downsampleTrackPoints(enrichedEle.points, 250)
             val splits = buildKmSplitsFromPoints(
@@ -198,7 +198,7 @@ object BandSyncHelper {
         } else 0
         val source = when {
             bleDeviceName != null -> bleDeviceName
-            hc.dataOriginPackage.contains("huawei", true) -> "HUAWEI Band 11 Pro (Health Connect)"
+            hc.dataOriginPackage.contains("huawei", true) -> "Wearable Device (Health Connect)"
             else -> "Health Connect"
         }
         return DailyHealthLog(

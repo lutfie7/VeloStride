@@ -115,7 +115,7 @@ class HealthConnectManager(private val context: Context) {
                     _snapshot.update {
                         it.copy(
                             state = HealthConnectState.AVAILABLE_NEEDS_PERMISSION,
-                            lastSyncMessage = "Grant Health Connect access to import all HUAWEI Band 11 Pro metrics & workouts."
+                            lastSyncMessage = "Grant Health Connect access to import all Wearable Device metrics & workouts."
                         )
                     }
                     HealthConnectState.AVAILABLE_NEEDS_PERMISSION
@@ -272,7 +272,7 @@ class HealthConnectManager(private val context: Context) {
                     extractExerciseSession(client, granted, session, maxHrBaseline)
                 }
 
-            val sourceLabel = if (originPkg.contains("huawei", true)) "Huawei Health / Band 11 Pro" else "Health Connect"
+            val sourceLabel = if (originPkg.contains("huawei", true)) "Wearable Device / Health Connect" else "Health Connect"
             val updated = HealthConnectSnapshot(
                 state = HealthConnectState.AVAILABLE_GRANTED,
                 stepsToday = totalSteps,
@@ -295,7 +295,7 @@ class HealthConnectManager(private val context: Context) {
                 lastSyncMessage = if (totalSteps > 0 || sleepTotalMin > 0 || latestHr > 0 || importedSessions.isNotEmpty()) {
                     "Synced $sourceLabel (${importedSessions.size} workouts, $totalSteps steps)"
                 } else {
-                    "Health Connect ready (no Huawei Health records in window yet)"
+                    "Health Connect ready (no Wearable Device records in window yet)"
                 }
             )
             _snapshot.value = updated
@@ -316,7 +316,7 @@ class HealthConnectManager(private val context: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
             return ImportedExerciseSession(
                 externalId = session.metadata.id,
-                title = session.title ?: "Huawei Workout",
+                title = session.title ?: "Wearable Workout",
                 sportType = SportType.WORKOUT,
                 startTimeMs = 0L,
                 durationSeconds = 0L,
@@ -414,7 +414,7 @@ class HealthConnectManager(private val context: Context) {
         val finalDist = if (distMeters > 0.0) distMeters else computeRouteDistance(routePoints)
         val pkg = session.metadata.dataOrigin.packageName
         val defaultTitle = if (pkg.contains("huawei", true)) {
-            "Huawei Band ${sport.label}"
+            "Wearable Device ${sport.label}"
         } else {
             "${sport.label} (Health Connect)"
         }

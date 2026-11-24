@@ -228,7 +228,7 @@ class HuaweiBleManager(private val context: Context) {
                 _state.update {
                     it.copy(
                         status = BleConnectionStatus.PERMISSION_REQUIRED,
-                        statusMessage = "Bluetooth permissions needed to scan and pair HUAWEI Band 11 Pro."
+                        statusMessage = "Bluetooth permissions needed to scan and pair Wearable Device."
                     )
                 }
             }
@@ -250,7 +250,7 @@ class HuaweiBleManager(private val context: Context) {
                         statusMessage = if (discoveredMap.isNotEmpty()) {
                             "${discoveredMap.size} wearable/BLE device(s) ready to pair or connect."
                         } else {
-                            "Ready to scan for HUAWEI Band 11 Pro or BLE heart rate sensors."
+                            "Ready to scan for Wearable Device or BLE heart rate sensors."
                         }
                     )
                 }
@@ -273,7 +273,7 @@ class HuaweiBleManager(private val context: Context) {
                     isHuaweiDevice = isHuawei,
                     supportsHeartRate = true,
                     supportsRsc = false,
-                    manufacturerName = if (isHuawei) "Huawei (Active GATT)" else "Active BLE GATT",
+                    manufacturerName = if (isHuawei) "Wearable Device (Active GATT)" else "Active BLE GATT",
                     advertisedServices = listOf("Active Link"),
                     isBonded = dev.bondState == BluetoothDevice.BOND_BONDED
                 )
@@ -296,7 +296,7 @@ class HuaweiBleManager(private val context: Context) {
                         isHuaweiDevice = isHuawei,
                         supportsHeartRate = isHuawei,
                         supportsRsc = false,
-                        manufacturerName = if (isHuawei) "Huawei (Bonded)" else "Bonded BLE",
+                        manufacturerName = if (isHuawei) "Wearable Device (Bonded)" else "Bonded BLE",
                         advertisedServices = listOf("System Bonded"),
                         isBonded = true
                     )
@@ -343,7 +343,7 @@ class HuaweiBleManager(private val context: Context) {
                 status = if (activeGatt != null) BleConnectionStatus.CONNECTED else BleConnectionStatus.SCANNING,
                 isScanning = true,
                 discoveredDevices = sortCandidates(discoveredMap.values),
-                statusMessage = "Scanning BLE peripherals (0x027D Huawei & 0x180D HR)..."
+                statusMessage = "Scanning BLE peripherals (Wearable Device & 0x180D HR)..."
             )
         }
 
@@ -389,7 +389,7 @@ class HuaweiBleManager(private val context: Context) {
                 isScanning = false,
                 status = nextStatus,
                 statusMessage = if (discoveredMap.isEmpty() && activeGatt == null) {
-                    "No BLE devices found nearby. Enable Heart Rate Broadcast on Band or toggle 'Show All BLE'."
+                    "No BLE devices found nearby. Enable Heart Rate Broadcast on Wearable Device or toggle 'Show All BLE'."
                 } else {
                     current.statusMessage
                 }
@@ -572,7 +572,7 @@ class HuaweiBleManager(private val context: Context) {
             }
 
             val displayName = rawName?.takeIf { it.isNotBlank() } ?: when {
-                isHuawei -> "HUAWEI Band / Wearable"
+                isHuawei -> "Wearable Device"
                 supportsHr || supportsRsc -> "BLE Fitness Sensor"
                 else -> "BLE Device (${device.address.takeLast(5)})"
             }
@@ -582,9 +582,9 @@ class HuaweiBleManager(private val context: Context) {
                     RSC_SERVICE -> "RSC 0x1814"
                     CSC_SERVICE -> "CSC 0x1816"
                     BATTERY_SERVICE -> "Battery 0x180F"
-                    HUAWEI_WEAR_UUID_FE86 -> "Huawei Wear 0xFE86"
-                    HUAWEI_WEAR_UUID_3802 -> "Huawei Wear 0x3802"
-                    HUAWEI_WEAR_UUID_FD82 -> "Huawei Wear 0xFD82"
+                    HUAWEI_WEAR_UUID_FE86 -> "Wearable 0xFE86"
+                    HUAWEI_WEAR_UUID_3802 -> "Wearable 0x3802"
+                    HUAWEI_WEAR_UUID_FD82 -> "Wearable 0xFD82"
                     else -> uuid.toString().substring(4, 8).uppercase()
                 }
             }
@@ -597,7 +597,7 @@ class HuaweiBleManager(private val context: Context) {
                 isHuaweiDevice = isHuawei,
                 supportsHeartRate = supportsHr || isHuawei,
                 supportsRsc = supportsRsc,
-                manufacturerName = if (isHuawei) "Huawei Technologies (0x027D)" else "Standard BLE",
+                manufacturerName = if (isHuawei) "Wearable Device (0x027D)" else "Standard BLE",
                 advertisedServices = labels,
                 isBonded = bonded
             )
@@ -681,7 +681,7 @@ class HuaweiBleManager(private val context: Context) {
                             statusMessage = if (userRequestedDisconnect) {
                                 "Disconnected."
                             } else {
-                                "Disconnected (status $status). Verify Band is awake, paired in Bluetooth, & broadcasting HR."
+                                "Disconnected (status $status). Verify Wearable Device is awake, paired in Bluetooth, & broadcasting HR."
                             }
                         )
                     }
@@ -702,8 +702,8 @@ class HuaweiBleManager(private val context: Context) {
                     CSC_SERVICE -> "Cycling Speed & Cadence (0x1816)"
                     BATTERY_SERVICE -> "Battery Service (0x180F)"
                     DEVICE_INFO_SERVICE -> "Device Information (0x180A)"
-                    HUAWEI_WEAR_UUID_FE86 -> "Huawei Wear Channel (0xFE86)"
-                    HUAWEI_WEAR_UUID_3802 -> "Huawei Health Link (0x3802)"
+                    HUAWEI_WEAR_UUID_FE86 -> "Wearable Channel (0xFE86)"
+                    HUAWEI_WEAR_UUID_3802 -> "Wearable Health Link (0x3802)"
                     else -> service.uuid.toString().take(8).uppercase()
                 }
             }
@@ -718,7 +718,7 @@ class HuaweiBleManager(private val context: Context) {
                     statusMessage = if (hasHr) {
                         "Streaming live telemetry from ${it.connectedDeviceName}"
                     } else {
-                        "Connected (${serviceSummary.size} services). Enable Heart Rate Broadcast on Band 11 Pro for live BPM."
+                        "Connected (${serviceSummary.size} services). Enable Heart Rate Broadcast on Wearable Device for live BPM."
                     }
                 )
             }
