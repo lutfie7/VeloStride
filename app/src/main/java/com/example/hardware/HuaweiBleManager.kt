@@ -57,6 +57,7 @@ class HuaweiBleManager(private val context: Context) {
     private var connectJob: Job? = null
     private var bondTimeoutJob: Job? = null
     private var reconnectJob: Job? = null
+    private var servicePollJob: Job? = null
     private var userRequestedDisconnect = false
     private var reconnectAttempts = 0
     private var handshakeRetries = 0
@@ -174,6 +175,7 @@ class HuaweiBleManager(private val context: Context) {
         connectJob?.cancel()
         bondTimeoutJob?.cancel()
         reconnectJob?.cancel()
+        servicePollJob?.cancel()
         closeActiveGattOnly()
         if (receiverRegistered) {
             runCatching { appContext.unregisterReceiver(systemBleReceiver) }
@@ -189,6 +191,9 @@ class HuaweiBleManager(private val context: Context) {
 
         val HEART_RATE_SERVICE: UUID = UUID.fromString("0000180d-0000-1000-8000-00805f9b34fb")
         val HEART_RATE_MEASUREMENT: UUID = UUID.fromString("00002a37-0000-1000-8000-00805f9b34fb")
+        val PLX_SERVICE: UUID = UUID.fromString("00001822-0000-1000-8000-00805f9b34fb")
+        val PLX_SPOT_CHECK: UUID = UUID.fromString("00002a5e-0000-1000-8000-00805f9b34fb")
+        val PLX_CONTINUOUS: UUID = UUID.fromString("00002a5f-0000-1000-8000-00805f9b34fb")
         val RSC_SERVICE: UUID = UUID.fromString("00001814-0000-1000-8000-00805f9b34fb")
         val RSC_MEASUREMENT: UUID = UUID.fromString("00002a53-0000-1000-8000-00805f9b34fb")
         val CSC_SERVICE: UUID = UUID.fromString("00001816-0000-1000-8000-00805f9b34fb")
@@ -653,8 +658,13 @@ class HuaweiBleManager(private val context: Context) {
         connectJob?.cancel()
         bondTimeoutJob?.cancel()
         reconnectJob?.cancel()
+        servicePollJob?.cancel()
         closeActiveGattOnly()
         recentRrIntervalsMs.clear()
+        prevWheelRevs = -1
+        prevWheelEventTime = -1
+        prevCrankRevs = -1
+        prevCrankEventTime = -1
         _state.update {
             it.copy(
                 status = BleConnectionStatus.DISCONNECTED,
@@ -662,6 +672,7 @@ class HuaweiBleManager(private val context: Context) {
                 connectedMacAddress = null,
                 liveHeartRateBpm = 0,
                 hrvRmssdMs = 0.0,
+                liveSpo2Percent = 0.0,
                 sensorContactDetected = null,
                 liveCadenceSpm = 0,
                 liveSpeedKmh = 0.0,
@@ -669,6 +680,24 @@ class HuaweiBleManager(private val context: Context) {
                 discoveredServices = emptyList(),
                 statusMessage = "Disconnected from wearable."
             )
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    fun refreshConnectedServices() {
+        val gatt = activeGatt ?: return
+        if (!hasBlePermissions() || _state.value.status != BleConnectionStatus.CONNECTED) return
+        serviceRefreshAttemptedForConnection = false
+        refreshGattCache(gatt)
+        connectJob?.cancel()
+        connectJob = scope.launch {
+            delay(350L)
+            if (activeGatt === gatt && !userRequestedDisconnect) {
+                _state.update {
+                    it.copy(statusMessage = "Refreshing GATT telemetry services on ${it.connectedDeviceName}...")
+                }
+                gatt.discoverServices()
+            }
         }
     }
 
@@ -883,6 +912,7 @@ class HuaweiBleManager(private val context: Context) {
             val serviceSummary = gatt.services.map { service ->
                 when (service.uuid) {
                     HEART_RATE_SERVICE -> "Heart Rate (0x180D)"
+                    PLX_SERVICE -> "Pulse Oximeter SpO2 (0x1822)"
                     RSC_SERVICE -> "Running Speed & Cadence (0x1814)"
                     CSC_SERVICE -> "Cycling Speed & Cadence (0x1816)"
                     BATTERY_SERVICE -> "Battery Service (0x180F)"
@@ -916,6 +946,10 @@ class HuaweiBleManager(private val context: Context) {
             gatt.getService(HEART_RATE_SERVICE)?.getCharacteristic(HEART_RATE_MEASUREMENT)?.let { hrChar ->
                 enqueueGattOp { enableNotifications(gatt, hrChar) }
             }
+            gatt.getService(PLX_SERVICE)?.let { plxSvc ->
+                plxSvc.getCharacteristic(PLX_CONTINUOUS)?.let { c -> enqueueGattOp { enableNotifications(gatt, c) } }
+                plxSvc.getCharacteristic(PLX_SPOT_CHECK)?.let { c -> enqueueGattOp { enableNotifications(gatt, c) } }
+            }
             gatt.getService(RSC_SERVICE)?.getCharacteristic(RSC_MEASUREMENT)?.let { rscChar ->
                 enqueueGattOp { enableNotifications(gatt, rscChar) }
             }
@@ -933,6 +967,25 @@ class HuaweiBleManager(private val context: Context) {
             }
 
             processNextGattOp()
+
+            // If connected without 0x180D HR yet, periodically re-check GATT table so newly enabled
+            // Heart Rate Broadcast on the band begins streaming automatically.
+            servicePollJob?.cancel()
+            if (!hasHr) {
+                servicePollJob = scope.launch {
+                    repeat(5) {
+                        delay(10_000L)
+                        if (activeGatt !== gatt || userRequestedDisconnect || _state.value.liveHeartRateBpm > 0) {
+                            return@launch
+                        }
+                        refreshGattCache(gatt)
+                        delay(300L)
+                        if (activeGatt === gatt && !userRequestedDisconnect) {
+                            gatt.discoverServices()
+                        }
+                    }
+                }
+            }
         }
 
         @SuppressLint("MissingPermission")
@@ -1056,6 +1109,7 @@ class HuaweiBleManager(private val context: Context) {
         if (bytes.isEmpty()) return
         when (uuid) {
             HEART_RATE_MEASUREMENT -> parseHeartRatePacket(bytes)
+            PLX_SPOT_CHECK, PLX_CONTINUOUS -> parsePlxPacket(bytes)
             RSC_MEASUREMENT -> parseRscPacket(bytes)
             CSC_MEASUREMENT -> parseCscPacket(bytes)
             BATTERY_LEVEL -> {
@@ -1075,6 +1129,35 @@ class HuaweiBleManager(private val context: Context) {
                 _state.update { it.copy(firmwareVersion = text) }
             }
         }
+    }
+
+    private fun parsePlxPacket(bytes: ByteArray) {
+        if (bytes.size < 5) return
+        // Standard Bluetooth SIG PLX Spot-Check / Continuous:
+        // [0] Flags, [1..2] SpO2 SFLOAT, [3..4] PR SFLOAT
+        val spo2Raw = decodeSfloat(bytes[1], bytes[2])
+        val prRaw = decodeSfloat(bytes[3], bytes[4])
+        val validSpo2 = spo2Raw?.takeIf { it in 70.0..100.0 }
+        val validPr = prRaw?.toInt()?.takeIf { it in 35..220 }
+        if (validSpo2 != null || validPr != null) {
+            _state.update { current ->
+                current.copy(
+                    liveSpo2Percent = validSpo2?.let { (it * 10.0).toInt() / 10.0 } ?: current.liveSpo2Percent,
+                    liveHeartRateBpm = if (current.liveHeartRateBpm <= 0 && validPr != null) validPr else current.liveHeartRateBpm,
+                    lastPacketTimestampMs = System.currentTimeMillis()
+                )
+            }
+        }
+    }
+
+    private fun decodeSfloat(lsb: Byte, msb: Byte): Double? {
+        val raw = (lsb.toInt() and 0xFF) or ((msb.toInt() and 0xFF) shl 8)
+        if (raw == 0x07FF || raw == 0x0800 || raw == 0x07FE || raw == 0x0802 || raw == 0x0FFF) return null
+        var mantissa = raw and 0x0FFF
+        if ((mantissa and 0x0800) != 0) mantissa = mantissa or -0x1000
+        var exponent = (raw ushr 12) and 0x0F
+        if ((exponent and 0x08) != 0) exponent = exponent or -0x10
+        return mantissa * Math.pow(10.0, exponent.toDouble())
     }
 
     private fun parseHeartRatePacket(bytes: ByteArray) {
@@ -1151,6 +1234,8 @@ class HuaweiBleManager(private val context: Context) {
         }
     }
 
+    private var prevWheelRevs: Long = -1L
+    private var prevWheelEventTime: Int = -1
     private var prevCrankRevs: Int = -1
     private var prevCrankEventTime: Int = -1
 
@@ -1160,7 +1245,26 @@ class HuaweiBleManager(private val context: Context) {
         val hasWheel = (flags and 0x01) != 0
         val hasCrank = (flags and 0x02) != 0
         var offset = 1
-        if (hasWheel) offset += 6
+        var computedSpeedKmh: Double? = null
+        if (hasWheel && bytes.size >= offset + 6) {
+            val wheelRevs = (bytes[offset].toLong() and 0xFFL) or
+                ((bytes[offset + 1].toLong() and 0xFFL) shl 8) or
+                ((bytes[offset + 2].toLong() and 0xFFL) shl 16) or
+                ((bytes[offset + 3].toLong() and 0xFFL) shl 24)
+            val evtTime = (bytes[offset + 4].toInt() and 0xFF) or ((bytes[offset + 5].toInt() and 0xFF) shl 8)
+            if (prevWheelRevs >= 0L && wheelRevs > prevWheelRevs) {
+                val deltaRevs = wheelRevs - prevWheelRevs
+                val deltaTime = ((evtTime - prevWheelEventTime) and 0xFFFF) / 1024.0
+                if (deltaTime > 0.1) {
+                    val meters = deltaRevs * 2.105 // standard 700x25c wheel circumference
+                    computedSpeedKmh = ((meters / deltaTime) * 3.6).coerceIn(0.0, 95.0)
+                }
+            }
+            prevWheelRevs = wheelRevs
+            prevWheelEventTime = evtTime
+            offset += 6
+        }
+        var computedCadenceRpm: Int? = null
         if (hasCrank && bytes.size >= offset + 4) {
             val revs = (bytes[offset].toInt() and 0xFF) or ((bytes[offset + 1].toInt() and 0xFF) shl 8)
             val evtTime = (bytes[offset + 2].toInt() and 0xFF) or ((bytes[offset + 3].toInt() and 0xFF) shl 8)
@@ -1168,12 +1272,20 @@ class HuaweiBleManager(private val context: Context) {
                 val deltaRevs = (revs - prevCrankRevs) and 0xFFFF
                 val deltaTime = ((evtTime - prevCrankEventTime) and 0xFFFF) / 1024.0
                 if (deltaTime > 0.1) {
-                    val rpm = ((deltaRevs / deltaTime) * 60.0).toInt().coerceIn(20, 180)
-                    _state.update { it.copy(liveCadenceSpm = rpm, lastPacketTimestampMs = System.currentTimeMillis()) }
+                    computedCadenceRpm = ((deltaRevs / deltaTime) * 60.0).toInt().coerceIn(20, 180)
                 }
             }
             prevCrankRevs = revs
             prevCrankEventTime = evtTime
+        }
+        if (computedSpeedKmh != null || computedCadenceRpm != null) {
+            _state.update { current ->
+                current.copy(
+                    liveSpeedKmh = computedSpeedKmh ?: current.liveSpeedKmh,
+                    liveCadenceSpm = computedCadenceRpm ?: current.liveCadenceSpm,
+                    lastPacketTimestampMs = System.currentTimeMillis()
+                )
+            }
         }
     }
 

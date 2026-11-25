@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -170,14 +171,17 @@ fun RecordScreen(
                         }
                     }
 
+                    val isConnectedBle = ble.status == BleConnectionStatus.CONNECTED
+                    val batteryDisplay = rec.wearableBatteryPercent.takeIf { it >= 0 } ?: ble.batteryPercent
                     Surface(
-                        color = if (ble.status == BleConnectionStatus.CONNECTED) {
+                        color = if (isConnectedBle) {
                             EmeraldPeak.copy(alpha = 0.16f)
                         } else {
                             MaterialTheme.colorScheme.surfaceVariant
                         },
                         shape = RoundedCornerShape(10.dp),
                         modifier = Modifier
+                            .heightIn(min = 48.dp)
                             .clickable { onNavigateToDevices() }
                             .testTag("record_wearable_pill")
                     ) {
@@ -188,15 +192,16 @@ fun RecordScreen(
                             Icon(
                                 Icons.Rounded.Watch,
                                 contentDescription = "Wearable Device telemetry",
-                                tint = if (ble.status == BleConnectionStatus.CONNECTED) EmeraldPeak else MaterialTheme.colorScheme.onSurfaceVariant,
+                                tint = if (isConnectedBle) EmeraldPeak else MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.size(16.dp)
                             )
                             Spacer(Modifier.width(6.dp))
+                            val deviceTitle = (rec.telemetryDeviceName ?: ble.connectedDeviceName).orEmpty()
                             Text(
-                                text = if (ble.status == BleConnectionStatus.CONNECTED) {
-                                    ble.connectedDeviceName ?: "Wearable Live"
-                                } else {
-                                    "Pair Wearable"
+                                text = when {
+                                    isConnectedBle && batteryDisplay >= 0 -> "${deviceTitle.ifBlank { "Wearable" }} • $batteryDisplay%"
+                                    isConnectedBle -> deviceTitle.ifBlank { "Wearable Live" }
+                                    else -> "Pair Wearable"
                                 },
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.SemiBold
@@ -299,12 +304,17 @@ fun RecordScreen(
                     }
 
                     Spacer(Modifier.height(14.dp))
+                    val liveHr = rec.liveHeartRate.takeIf { it > 0 } ?: ble.liveHeartRateBpm
+                    val liveHrv = rec.liveHrvMs.takeIf { it > 0.0 } ?: ble.hrvRmssdMs
+                    val liveSpo2 = rec.liveSpo2Percent.takeIf { it > 0.0 } ?: ble.liveSpo2Percent
+                    val liveCad = rec.liveCadence.takeIf { it > 0 } ?: ble.liveCadenceSpm
+                    val liveSteps = rec.sessionSteps.takeIf { it > 0 } ?: ble.sessionBleSteps
+                    val zone = Formatters.computeHrZone(liveHr, maxHr)
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceAround
                     ) {
-                        val liveHr = rec.liveHeartRate.takeIf { it > 0 } ?: ble.liveHeartRateBpm
-                        val zone = Formatters.computeHrZone(liveHr, maxHr)
                         MetricCell(
                             label = if (zone > 0) "HR (${Formatters.hrZoneLabel(zone)})" else "Heart Rate",
                             value = if (liveHr > 0) "$liveHr bpm" else "-- bpm",
@@ -312,12 +322,59 @@ fun RecordScreen(
                         )
                         MetricCell(
                             label = "Cadence",
-                            value = if (rec.liveCadence > 0) "${rec.liveCadence} spm" else "--"
+                            value = if (liveCad > 0) "$liveCad spm" else "--"
                         )
                         MetricCell(
                             label = "Calories",
                             value = "${rec.estimatedCalories} kcal"
                         )
+                    }
+
+                    if (ble.status == BleConnectionStatus.CONNECTED || liveHrv > 0.0 || liveSpo2 > 0.0 || liveSteps > 0) {
+                        Spacer(Modifier.height(12.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceAround
+                        ) {
+                            MetricCell(
+                                label = "HRV RMSSD",
+                                value = if (liveHrv > 0.0) "$liveHrv ms" else "--",
+                                valueColor = SignalCyan
+                            )
+                            MetricCell(
+                                label = "SpO2",
+                                value = if (liveSpo2 > 0.0) "$liveSpo2%" else "--",
+                                valueColor = EmeraldPeak
+                            )
+                            MetricCell(
+                                label = "Steps",
+                                value = if (liveSteps > 0) "$liveSteps" else "--"
+                            )
+                        }
+                        Spacer(Modifier.height(10.dp))
+                        val isStreaming = rec.isWearableStreaming || liveHr > 0 || liveCad > 0 || liveSpo2 > 0.0
+                        Surface(
+                            color = if (isStreaming) {
+                                EmeraldPeak.copy(alpha = 0.14f)
+                            } else {
+                                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
+                            },
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("record_wearable_telemetry_banner")
+                        ) {
+                            Text(
+                                text = if (isStreaming) {
+                                    "Wearable telemetry streaming directly from ${ble.connectedDeviceName ?: "device"}"
+                                } else {
+                                    "${ble.connectedDeviceName ?: "Wearable"} connected — enable Heart Rate Broadcast on watch for live BPM (Health Connect HR auto-fills on save)"
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (isStreaming) EmeraldPeak else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp)
+                            )
+                        }
                     }
                 }
             }

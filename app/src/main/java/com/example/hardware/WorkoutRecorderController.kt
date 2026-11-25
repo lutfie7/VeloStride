@@ -15,6 +15,7 @@ import android.os.Looper
 import androidx.core.content.ContextCompat
 import com.example.core.Formatters
 import com.example.core.PerformanceEngine
+import com.example.data.model.BleConnectionStatus
 import com.example.data.model.SportType
 import com.example.data.model.SplitKm
 import com.example.data.model.TrackPoint
@@ -56,7 +57,10 @@ data class LiveRecordingState(
     val avgHeartRate: Int = 0,
     val maxHeartRate: Int = 0,
     val liveHeartRate: Int = 0,
+    val liveHrvMs: Double = 0.0,
+    val liveSpo2Percent: Double = 0.0,
     val liveCadence: Int = 0,
+    val sessionSteps: Int = 0,
     val estimatedCalories: Int = 0,
     val autoPauseEnabled: Boolean = true,
     val autoPausedNow: Boolean = false,
@@ -67,6 +71,11 @@ data class LiveRecordingState(
     val beaconActive: Boolean = false,
     val lastLat: Double? = null,
     val lastLng: Double? = null,
+    val startTimeMs: Long = 0L,
+    val lastLocationFixMs: Long = 0L,
+    val telemetryDeviceName: String? = null,
+    val wearableBatteryPercent: Int = -1,
+    val isWearableStreaming: Boolean = false,
 )
 
 class WorkoutRecorderController(
@@ -89,6 +98,11 @@ class WorkoutRecorderController(
     private var timerJob: Job? = null
     private var maxHrBaseline = 192
     private var restingHrBaseline = 54
+    private var athleteWeightKg = 68.0
+    private var athleteAgeYears = 30
+    private var athleteGender = ""
+    private var sessionStartTimeMs = 0L
+    private var lastGpsFixMs = 0L
     private var lastLocation: Location? = null
     private var lastAltitude: Double? = null
     private var smoothedBaroAltitude: Double? = null
@@ -136,14 +150,25 @@ class WorkoutRecorderController(
         restingHrBaseline = restingHr.coerceIn(35, 110)
     }
 
+    fun updateAthleteBiometrics(weightKg: Double, ageYears: Int?, gender: String) {
+        if (weightKg in 30.0..250.0) athleteWeightKg = weightKg
+        if (ageYears != null && ageYears in 10..100) athleteAgeYears = ageYears
+        athleteGender = gender
+    }
+
     @SuppressLint("MissingPermission")
     fun startRecording() {
         resetCounters()
         bleManager.resetSessionCounters()
+        sessionStartTimeMs = System.currentTimeMillis()
+        val ble = bleManager.state.value
         _state.update {
             it.copy(
                 phase = RecordingPhase.RECORDING,
                 autoPausedNow = false,
+                startTimeMs = sessionStartTimeMs,
+                telemetryDeviceName = ble.connectedDeviceName,
+                wearableBatteryPercent = ble.batteryPercent,
                 elevationSource = if (pressureSensor != null) "Phone Barometer" else "GPS + Copernicus DEM"
             )
         }
@@ -222,7 +247,8 @@ class WorkoutRecorderController(
         )
         val downsampled = downsampleTrackPoints(s.trackPoints, 250).map { it.toMap() }
         val splitMaps = s.splits.take(100).map { it.toMap() }
-        val deviceLabel = bleManager.state.value.connectedDeviceName ?: "Phone GPS"
+        val bleDeviceName = bleManager.state.value.connectedDeviceName ?: s.telemetryDeviceName
+        val deviceLabel = bleDeviceName ?: "Phone GPS"
 
         val built = WorkoutActivity(
             userId = userId,
@@ -260,6 +286,13 @@ class WorkoutRecorderController(
             elevationSource = if (pressureSensor != null) "Phone Barometer" else "GPS + Copernicus DEM"
         )
         return built
+    }
+
+    fun currentSessionWindowMs(): Pair<Long, Long> {
+        val end = System.currentTimeMillis()
+        val start = sessionStartTimeMs.takeIf { it > 0L }
+            ?: (end - _state.value.elapsedSeconds.coerceAtLeast(1L) * 1000L)
+        return start to end
     }
 
     fun discardRecording() {
@@ -348,16 +381,48 @@ class WorkoutRecorderController(
         timerJob = scope.launch {
             while (true) {
                 delay(1000L)
+                val now = System.currentTimeMillis()
                 val ble = bleManager.state.value
-                val liveBpm = ble.liveHeartRateBpm
-                val liveCad = ble.liveCadenceSpm
+                val bleConnected = ble.status == BleConnectionStatus.CONNECTED
+                val packetFresh = bleConnected && (now - ble.lastPacketTimestampMs <= 15_000L)
+                val liveBpm = if (bleConnected && (packetFresh || ble.liveHeartRateBpm > 0)) ble.liveHeartRateBpm else 0
+                val liveCad = if (bleConnected && packetFresh) ble.liveCadenceSpm else 0
+                val liveHrv = if (bleConnected) ble.hrvRmssdMs else 0.0
+                val liveSpo2 = if (bleConnected) ble.liveSpo2Percent else 0.0
+                val bleSpeed = if (bleConnected && packetFresh) ble.liveSpeedKmh else 0.0
+
                 _state.update { current ->
+                    val commonDeviceName = ble.connectedDeviceName ?: current.telemetryDeviceName
+                    val battery = if (ble.batteryPercent >= 0) ble.batteryPercent else current.wearableBatteryPercent
+
                     if (current.phase != RecordingPhase.RECORDING) {
-                        current.copy(liveHeartRate = liveBpm, liveCadence = liveCad)
+                        current.copy(
+                            liveHeartRate = liveBpm,
+                            liveHrvMs = liveHrv,
+                            liveSpo2Percent = liveSpo2,
+                            liveCadence = liveCad,
+                            sessionSteps = ble.sessionBleSteps,
+                            telemetryDeviceName = commonDeviceName,
+                            wearableBatteryPercent = battery,
+                            isWearableStreaming = packetFresh && (liveBpm > 0 || liveCad > 0 || liveSpo2 > 0.0)
+                        )
                     } else {
                         val nextElapsed = current.elapsedSeconds + 1L
-                        val isMoving = !current.autoPausedNow
+                        val gpsStale = (now - lastGpsFixMs) > 4_000L
+                        val bleIsMoving = bleSpeed > 0.8 || liveCad > 25
+                        val isMoving = if (gpsStale && bleIsMoving) true else !current.autoPausedNow
                         val nextMoving = if (isMoving) current.movingSeconds + 1L else current.movingSeconds
+
+                        // If phone GPS hasn't updated (e.g., indoor treadmill/bike or shielded GPS)
+                        // and wearable BLE RSC/CSC broadcasts speed, integrate speed & distance directly from BLE!
+                        var nextDist = current.distanceMeters
+                        var nextSpeed = current.currentSpeedKmh
+                        var nextPace = current.currentPaceSecPerKm
+                        if ((gpsStale || current.currentSpeedKmh < 0.5) && bleSpeed > 0.8 && isMoving) {
+                            nextDist += (bleSpeed / 3.6)
+                            nextSpeed = (bleSpeed * 10.0).roundToInt() / 10.0
+                            nextPace = (3600.0 / bleSpeed).roundToInt().coerceIn(60, 3600)
+                        }
 
                         val zones = current.hrZoneSeconds.toMutableList()
                         var nextMaxHr = current.maxHeartRate
@@ -377,7 +442,14 @@ class WorkoutRecorderController(
 
                         val avgHr = if (hrSampleCount > 0) (hrSampleSum / hrSampleCount).toInt() else 0
                         val kcalPerMin = if (avgHr > 70) {
-                            ((avgHr * 0.145) - 5.2).coerceIn(4.0, 18.0)
+                            // Keytel HR calorie burn equation using athlete biometrics + live device HR
+                            if (athleteGender.equals("FEMALE", ignoreCase = true)) {
+                                ((-20.4022 + (0.4472 * avgHr) - (0.1263 * athleteWeightKg) + (0.074 * athleteAgeYears)) / 4.184)
+                                    .coerceIn(3.5, 22.0)
+                            } else {
+                                ((-55.0969 + (0.6309 * avgHr) + (0.1988 * athleteWeightKg) + (0.2017 * athleteAgeYears)) / 4.184)
+                                    .coerceIn(3.5, 25.0)
+                            }
                         } else {
                             when (current.sportType) {
                                 SportType.RUN, SportType.TRAIL_RUN -> 10.5
@@ -396,12 +468,21 @@ class WorkoutRecorderController(
                         current.copy(
                             elapsedSeconds = nextElapsed,
                             movingSeconds = nextMoving,
+                            distanceMeters = nextDist,
+                            currentSpeedKmh = nextSpeed,
+                            currentPaceSecPerKm = nextPace,
                             liveHeartRate = liveBpm,
+                            liveHrvMs = liveHrv,
+                            liveSpo2Percent = liveSpo2,
                             liveCadence = liveCad,
+                            sessionSteps = ble.sessionBleSteps,
                             avgHeartRate = avgHr,
                             maxHeartRate = nextMaxHr,
                             hrZoneSeconds = zones,
-                            estimatedCalories = kcal
+                            estimatedCalories = kcal,
+                            telemetryDeviceName = commonDeviceName,
+                            wearableBatteryPercent = battery,
+                            isWearableStreaming = packetFresh && (liveBpm > 0 || liveCad > 0 || liveSpo2 > 0.0)
                         )
                     }
                 }
@@ -440,6 +521,7 @@ class WorkoutRecorderController(
                 lastAltitude = loc.altitude
             }
             lastLocation = loc
+            lastGpsFixMs = System.currentTimeMillis()
 
             _state.update { current ->
                 val newDist = current.distanceMeters + distDelta
@@ -495,13 +577,16 @@ class WorkoutRecorderController(
                     trackPoints = updatedPoints,
                     splits = updatedSplits,
                     lastLat = loc.latitude,
-                    lastLng = loc.longitude
+                    lastLng = loc.longitude,
+                    lastLocationFixMs = lastGpsFixMs
                 )
             }
         }
     }
 
     private fun resetCounters() {
+        sessionStartTimeMs = 0L
+        lastGpsFixMs = 0L
         lastLocation = null
         lastAltitude = null
         smoothedBaroAltitude = null

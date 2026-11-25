@@ -8,6 +8,7 @@ import android.util.Log
 import androidx.core.content.ContextCompat
 import com.example.core.Formatters
 import com.example.data.model.AthleteProfile
+import com.example.data.model.DailyHealthLog
 import com.example.data.model.PerformanceAnalytics
 import com.example.data.model.VoiceCoachStatus
 import com.example.data.model.VoiceTranscriptEntry
@@ -64,6 +65,7 @@ class LiveVoiceCoachManager(
         profile: AthleteProfile,
         analytics: PerformanceAnalytics,
         recentWorkouts: List<WorkoutActivity>,
+        latestHealth: DailyHealthLog? = null,
     ) {
         if (!hasMicrophonePermission()) {
             _state.update {
@@ -117,7 +119,16 @@ class LiveVoiceCoachManager(
                                 append("Telemetry: RAI ${analytics.raiScore}/100 (${analytics.raiClassification}), ")
                                 append("VO2 Max ${analytics.vo2Max}, CTL ${analytics.fitnessCtl}, ATL ${analytics.fatigueAtl}, ")
                                 append("TSB ${analytics.formTsb}, Recovery ${analytics.recoveryScore}% (${analytics.recoveryStatusLabel}), ")
-                                append("HRV ${analytics.hrvRmssdMs} ms. Recent sessions: $workoutDigest.")
+                                append("HRV ${analytics.hrvRmssdMs} ms. ")
+                                if (latestHealth != null) {
+                                    append("Wearable (${latestHealth.sourceDevice}): ${latestHealth.steps} steps, ")
+                                    append("${latestHealth.activeCalories} kcal active, Resting HR ${latestHealth.restingHr} bpm, ")
+                                    if (latestHealth.spo2Percent > 0.0) append("SpO2 ${latestHealth.spo2Percent}%, ")
+                                    if (latestHealth.sleepTotalMinutes > 0) {
+                                        append("Sleep ${latestHealth.sleepTotalMinutes / 60}h${latestHealth.sleepTotalMinutes % 60}m (Deep ${latestHealth.sleepDeepMinutes}m, REM ${latestHealth.sleepRemMinutes}m), ")
+                                    }
+                                }
+                                append("Recent sessions: $workoutDigest.")
                             }
                         )
                     }

@@ -30,7 +30,7 @@ import java.net.SocketTimeoutException
 class AthleteIntelligenceRepository {
     private val coachGenerationConfig = generationConfig {
         temperature = 0.55f
-        maxOutputTokens = 700
+        maxOutputTokens = 950
     }
 
     private val primaryModel by lazy {
@@ -131,19 +131,24 @@ class AthleteIntelligenceRepository {
         workout: WorkoutActivity,
         profile: AthleteProfile,
         analytics: PerformanceAnalytics,
+        latestHealth: DailyHealthLog? = null,
     ): Flow<String> = flow {
         val bioLine = buildBiometricsSummary(profile)
+        val wearableLine = buildWearableHealthSummary(latestHealth, analytics)
         val prompt = buildString {
             appendLine("You are an elite endurance sports physiologist & Athlete Intelligence coach.")
-            appendLine("Analyze this workout concisely in 3 short sections: Effort Verdict, Physiological Breakdown (factoring in age/gender/height/weight/BMI & HR zones if present), Next Step.")
+            appendLine("Analyze this workout concisely in 3 short sections: Effort Verdict, Physiological Breakdown (factoring in age/gender/height/weight/BMI, HR zones, and wearable sleep/SpO2/HRV/steps if present), Next Step.")
             appendLine("Title: ${workout.title} | Sport: ${workout.parsedSport.label}")
             appendLine("Distance: ${Formatters.formatDistanceKm(workout.distanceMeters)} | Moving Time: ${Formatters.formatDuration(workout.movingTimeSeconds)} | Elev: ${Formatters.formatElevation(workout.elevationGainMeters)}")
             appendLine("Avg Pace: ${Formatters.formatPace(workout.avgPaceSecPerKm)} | Avg Speed: ${Formatters.formatSpeed(workout.avgSpeedKmh)}")
             appendLine("HR: Avg ${workout.avgHeartRate} / Max ${workout.maxHeartRate} bpm (Profile MaxHR=${profile.maxHr}, RestHR=${profile.restingHr}, FTP=${profile.ftpWatts}W)")
             appendLine("HR Zones (s Z1..Z5): ${workout.hrZoneSeconds.joinToString(", ")}")
-            appendLine("Effort: ${workout.relativeEffort} | RPE: ${workout.perceivedExertion}/10 | Device: ${workout.deviceName ?: "Phone GPS"}")
+            appendLine("Effort: ${workout.relativeEffort} | RPE: ${workout.perceivedExertion}/10 | Cadence: ${workout.avgCadence} spm | Calories: ${workout.calories} kcal | Device: ${workout.deviceName ?: "Phone GPS"}")
             if (bioLine.isNotBlank()) {
                 appendLine("Athlete Biometrics: $bioLine")
+            }
+            if (wearableLine.isNotBlank()) {
+                appendLine("Wearable Health Context: $wearableLine")
             }
             appendLine("Current Form: RAI=${analytics.raiScore}/100 (${analytics.raiClassification}), VO2 Max=${analytics.vo2Max} (${analytics.vo2MaxClassification}), CTL=${analytics.fitnessCtl}, ATL=${analytics.fatigueAtl}, TSB=${analytics.formTsb}, Recovery=${analytics.recoveryScore}%.")
         }
@@ -162,17 +167,18 @@ class AthleteIntelligenceRepository {
             "- ${w.title} (${w.parsedSport.label}): ${Formatters.formatDistanceKm(w.distanceMeters)}, ${Formatters.formatDuration(w.movingTimeSeconds)}, HR ${w.avgHeartRate}, Effort ${w.relativeEffort}"
         }.ifBlank { "No recorded workouts yet." }
         val bioLine = buildBiometricsSummary(profile)
+        val wearableLine = buildWearableHealthSummary(latestHealth, analytics)
 
         val prompt = buildString {
             appendLine("You are VeloStride AI Coach, an expert endurance performance physiologist.")
-            appendLine("Reply clearly and practically in the same language as the user's question (Indonesian or English).")
+            appendLine("Reply clearly and practically in the same language as the user's question (Indonesian or English), integrating wearable recovery, sleep stages, SpO2, steps, HRV, and training load.")
             appendLine("ATHLETE: ${profile.displayName} | Sport: ${profile.preferredSport} | Goal: ${profile.weeklyDistanceGoalKm} km/wk | MaxHR ${profile.maxHr} | RestHR ${profile.restingHr} | FTP ${profile.ftpWatts}W")
             if (bioLine.isNotBlank()) {
                 appendLine("BIOMETRICS: $bioLine")
             }
-            appendLine("ANALYTICS: RAI ${analytics.raiScore}/100 (${analytics.raiClassification}: Aerobic ${analytics.raiAerobicComponent}, Load ${analytics.raiLoadComponent}, Recovery ${analytics.raiRecoveryComponent}), VO2 Max ${analytics.vo2Max} (${analytics.vo2MaxClassification}), CTL ${analytics.fitnessCtl}, ATL ${analytics.fatigueAtl}, TSB ${analytics.formTsb}, ACWR ${analytics.acuteChronicRatio} (${analytics.loadStatusLabel}), Recovery ${analytics.recoveryScore}% (${analytics.recoveryStatusLabel}), HRV ${analytics.hrvRmssdMs}ms, Sleep ${analytics.sleepMinutes / 60}h${analytics.sleepMinutes % 60}m (${analytics.sleepScore}/100).")
-            if (latestHealth != null) {
-                appendLine("WEARABLE TODAY (${latestHealth.sourceDevice}): ${latestHealth.steps} steps, ${latestHealth.activeCalories} kcal")
+            appendLine("ANALYTICS: RAI ${analytics.raiScore}/100 (${analytics.raiClassification}: Aerobic ${analytics.raiAerobicComponent}, Load ${analytics.raiLoadComponent}, Recovery ${analytics.raiRecoveryComponent}), VO2 Max ${analytics.vo2Max} (${analytics.vo2MaxClassification}), CTL ${analytics.fitnessCtl}, ATL ${analytics.fatigueAtl}, TSB ${analytics.formTsb}, ACWR ${analytics.acuteChronicRatio} (${analytics.loadStatusLabel}), Recovery ${analytics.recoveryScore}% (${analytics.recoveryStatusLabel}).")
+            if (wearableLine.isNotBlank()) {
+                appendLine("WEARABLE TELEMETRY: $wearableLine")
             }
             appendLine("RECENT SESSIONS:")
             appendLine(recentSummary)
@@ -180,6 +186,42 @@ class AthleteIntelligenceRepository {
         }
 
         streamWithRetryAndFallback(prompt)
+    }
+
+    internal fun buildWearableHealthSummary(
+        latestHealth: DailyHealthLog?,
+        analytics: PerformanceAnalytics,
+    ): String {
+        val parts = mutableListOf<String>()
+        if (latestHealth != null) {
+            if (latestHealth.sourceDevice.isNotBlank()) parts.add("Source=${latestHealth.sourceDevice}")
+            if (latestHealth.steps > 0) parts.add("Steps=${latestHealth.steps}")
+            if (latestHealth.distanceMetersToday > 0.0) {
+                parts.add("DailyDist=${String.format(java.util.Locale.US, "%.2f", latestHealth.distanceMetersToday / 1000.0)}km")
+            }
+            if (latestHealth.activeCalories > 0) parts.add("ActiveKcal=${latestHealth.activeCalories}")
+            if (latestHealth.totalCalories > 0) parts.add("TotalKcal=${latestHealth.totalCalories}")
+            if (latestHealth.restingHr > 0) parts.add("RestingHR=${latestHealth.restingHr}bpm")
+            if (latestHealth.latestHr > 0) parts.add("LatestHR=${latestHealth.latestHr}bpm")
+            if (latestHealth.spo2Percent > 0.0) parts.add("SpO2=${latestHealth.spo2Percent}%")
+            val hrv = latestHealth.hrvRmssdMs.takeIf { it > 0.0 } ?: analytics.hrvRmssdMs
+            if (hrv > 0.0) parts.add("HRV=${hrv}ms")
+            if (latestHealth.sleepTotalMinutes > 0) {
+                parts.add(
+                    "Sleep=${latestHealth.sleepTotalMinutes / 60}h${latestHealth.sleepTotalMinutes % 60}m " +
+                        "(Deep ${latestHealth.sleepDeepMinutes}m, Light ${latestHealth.sleepLightMinutes}m, " +
+                        "REM ${latestHealth.sleepRemMinutes}m, Awake ${latestHealth.sleepAwakeMinutes}m, Score ${latestHealth.sleepScore}/100)"
+                )
+            }
+            if (latestHealth.vo2MaxEstimate > 10.0) parts.add("WatchVO2Max=${latestHealth.vo2MaxEstimate}")
+        } else {
+            if (analytics.hrvRmssdMs > 0.0) parts.add("HRV=${analytics.hrvRmssdMs}ms")
+            if (analytics.spo2Percent > 0.0) parts.add("SpO2=${analytics.spo2Percent}%")
+            if (analytics.sleepMinutes > 0) {
+                parts.add("Sleep=${analytics.sleepMinutes / 60}h${analytics.sleepMinutes % 60}m (${analytics.sleepScore}/100)")
+            }
+        }
+        return parts.joinToString(" | ")
     }
 
     private fun buildBiometricsSummary(profile: AthleteProfile): String {

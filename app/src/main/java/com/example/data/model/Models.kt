@@ -388,6 +388,10 @@ data class PerformanceAnalytics(
     val hrvRmssdMs: Double,
     val sleepMinutes: Int,
     val sleepScore: Int,
+    val spo2Percent: Double = 0.0,
+    val stepsToday: Int = 0,
+    val restingHr: Int = 0,
+    val activeCalories: Int = 0,
     val trainingSeries: List<FitnessLoadPoint>,
     val personalRecords: List<PersonalRecordItem>,
 )
@@ -428,6 +432,7 @@ data class BleTelemetryState(
     val isHuaweiNative: Boolean = false,
     val liveHeartRateBpm: Int = 0,
     val hrvRmssdMs: Double = 0.0,
+    val liveSpo2Percent: Double = 0.0,
     val sensorContactDetected: Boolean? = null,
     val liveCadenceSpm: Int = 0,
     val liveSpeedKmh: Double = 0.0,
@@ -486,6 +491,8 @@ data class HealthConnectSnapshot(
     val sleepAwakeMinutes: Int = 0,
     val importedExercises: List<ImportedExerciseSession> = emptyList(),
     val dataOriginPackage: String = "",
+    val missingPermissionsCount: Int = 0,
+    val huaweiHealthInstalled: Boolean = false,
     val lastSyncMessage: String = "Tap Sync Health Connect to pull Wearable Device & Health Connect records",
 )
 

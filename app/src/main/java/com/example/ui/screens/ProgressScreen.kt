@@ -419,6 +419,8 @@ fun ProgressScreen(viewModel: MainViewModel) {
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
+                        val spo2Val = latestHealth?.spo2Percent?.takeIf { it > 0.0 } ?: analytics.spo2Percent
+                        val activeCalVal = latestHealth?.activeCalories?.takeIf { it > 0 } ?: analytics.activeCalories
                         MetricCell(
                             label = "HRV RMSSD",
                             value = if (analytics.hrvRmssdMs > 0) "${analytics.hrvRmssdMs} ms" else "--",
@@ -426,7 +428,7 @@ fun ProgressScreen(viewModel: MainViewModel) {
                         )
                         MetricCell(
                             label = "SpO2",
-                            value = if ((latestHealth?.spo2Percent ?: 0.0) > 0.0) "${latestHealth?.spo2Percent}%" else "--",
+                            value = if (spo2Val > 0.0) "${spo2Val}%" else "--",
                             valueColor = EmeraldPeak
                         )
                         MetricCell(
@@ -437,7 +439,34 @@ fun ProgressScreen(viewModel: MainViewModel) {
                         )
                         MetricCell(
                             label = "Active Kcal",
-                            value = if ((latestHealth?.activeCalories ?: 0) > 0) "${latestHealth?.activeCalories}" else "--"
+                            value = if (activeCalVal > 0) "$activeCalVal" else "--"
+                        )
+                    }
+
+                    Spacer(Modifier.height(10.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        val stepsVal = latestHealth?.steps?.takeIf { it > 0 } ?: analytics.stepsToday
+                        val restHrVal = latestHealth?.restingHr?.takeIf { it > 0 } ?: analytics.restingHr
+                        MetricCell(
+                            label = "Steps Today",
+                            value = if (stepsVal > 0) "$stepsVal" else "--",
+                            valueColor = EmeraldPeak
+                        )
+                        MetricCell(
+                            label = "Resting HR",
+                            value = if (restHrVal > 0) "$restHrVal bpm" else "--",
+                            valueColor = CrimsonPulse
+                        )
+                        MetricCell(
+                            label = "Watch VO2",
+                            value = if ((latestHealth?.vo2MaxEstimate ?: 0.0) > 10.0) "${latestHealth?.vo2MaxEstimate}" else "--"
+                        )
+                        MetricCell(
+                            label = "Source",
+                            value = latestHealth?.sourceDevice?.takeIf { it.isNotBlank() }?.take(14) ?: "--"
                         )
                     }
 
@@ -612,10 +641,35 @@ fun ProgressScreen(viewModel: MainViewModel) {
                         Column {
                             Text("AI Performance Coach", style = MaterialTheme.typography.titleLarge)
                             Text(
-                                "Personalized training advice from VO2 Max, Load, HRV & Sleep",
+                                "Personalized training advice from VO2 Max, Load, Steps, SpO2, HRV & Sleep",
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                        }
+                    }
+
+                    if (latestHealth != null || analytics.stepsToday > 0) {
+                        val activeSignals = buildList {
+                            if ((latestHealth?.steps ?: analytics.stepsToday) > 0) add("Steps")
+                            if ((latestHealth?.sleepTotalMinutes ?: 0) > 0) add("Sleep Stages")
+                            if ((latestHealth?.spo2Percent ?: analytics.spo2Percent) > 0.0) add("SpO2")
+                            if ((latestHealth?.hrvRmssdMs ?: analytics.hrvRmssdMs) > 0.0) add("HRV")
+                            if ((latestHealth?.restingHr ?: 0) > 0) add("Rest HR")
+                        }
+                        if (activeSignals.isNotEmpty()) {
+                            Surface(
+                                color = EmeraldPeak.copy(alpha = 0.12f),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = "Wearable Data Active: ${activeSignals.joinToString(" • ")}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = EmeraldPeak,
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                )
+                            }
                         }
                     }
 

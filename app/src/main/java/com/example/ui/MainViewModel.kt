@@ -164,12 +164,20 @@ class MainViewModel(
         viewModelScope.launch {
             repository.ensureProfileExists(currentUserId, initialDisplayName, initialPhotoUrl)
             bleManager.refreshAdapterState()
-            healthConnectManager.checkAvailabilityAndPermissions()
+            val hcState = healthConnectManager.checkAvailabilityAndPermissions()
+            if (hcState == HealthConnectState.AVAILABLE_GRANTED) {
+                syncHealthConnectAndPersist(silentIfNoNewWorkouts = true)
+            }
         }
         viewModelScope.launch {
             profileState.collect { st ->
                 if (st is UiState.Success) {
                     recorderController.updateHrBaselines(st.data.maxHr, st.data.restingHr)
+                    recorderController.updateAthleteBiometrics(
+                        weightKg = st.data.weightKg,
+                        ageYears = st.data.ageYears(),
+                        gender = st.data.gender
+                    )
                 }
             }
         }
@@ -195,6 +203,10 @@ class MainViewModel(
                             lastSyncedLabel = "Live BLE Connected"
                         )
                     )
+                    // Also pull Huawei Health / Health Connect daily metrics (steps, sleep, SpO2, HRV) silently
+                    if (healthConnectManager.snapshot.value.state == HealthConnectState.AVAILABLE_GRANTED) {
+                        syncHealthConnectAndPersist(silentIfNoNewWorkouts = true)
+                    }
                 }
             }
         }
@@ -240,6 +252,7 @@ class MainViewModel(
                             bleCalories = ble.sessionBleCalories,
                             bleHr = ble.liveHeartRateBpm,
                             bleHrv = ble.hrvRmssdMs,
+                            bleSpo2 = ble.liveSpo2Percent,
                             bleDeviceName = ble.connectedDeviceName
                         )
                     )
@@ -296,11 +309,11 @@ class MainViewModel(
                     steps = hc.stepsToday + ble.sessionBleSteps,
                     distanceMetersToday = hc.distanceMetersToday,
                     activeCalories = hc.activeCaloriesToday + ble.sessionBleCalories,
-                    totalCalories = (hc.totalCaloriesToday + ble.sessionBleCalories).coerceAtLeast(ble.sessionBleCalories),
+                    totalCalories = (hc.totalCaloriesToday + ble.sessionBleCalories).coerceAtLeast(hc.activeCaloriesToday + ble.sessionBleCalories),
                     restingHr = hc.restingHeartRateBpm.takeIf { it > 0 } ?: profile.restingHr,
                     latestHr = ble.liveHeartRateBpm.takeIf { it > 0 } ?: hc.latestHeartRateBpm,
                     hrvRmssdMs = ble.hrvRmssdMs.takeIf { it > 0.0 } ?: hc.hrvRmssdMs,
-                    spo2Percent = hc.spo2Percent,
+                    spo2Percent = hc.spo2Percent.takeIf { it > 0.0 } ?: ble.liveSpo2Percent,
                     sleepTotalMinutes = hc.sleepTotalMinutes,
                     sleepDeepMinutes = hc.sleepDeepMinutes,
                     sleepLightMinutes = hc.sleepLightMinutes,
@@ -329,6 +342,7 @@ class MainViewModel(
         onSaved: (String) -> Unit,
     ) {
         viewModelScope.launch {
+            val (sessionStartMs, sessionEndMs) = recorderController.currentSessionWindowMs()
             var built = recorderController.stopAndBuildWorkout(
                 userId = currentUserId,
                 title = title,
@@ -338,6 +352,50 @@ class MainViewModel(
                 privateActivity = privateActivity,
                 notes = notes
             )
+            val profile = (profileState.value as? UiState.Success)?.data ?: AthleteProfile()
+            // If live BLE Heart Rate wasn't active during recording, check wearable HR samples synced via Health Connect
+            if (built.avgHeartRate == 0 && (sessionEndMs - sessionStartMs) >= 30_000L) {
+                val hcSamples = healthConnectManager.readHeartRateForWindow(sessionStartMs, sessionEndMs)
+                if (hcSamples.isNotEmpty()) {
+                    val avgHr = hcSamples.map { it.second }.average().roundToInt().coerceIn(40, 230)
+                    val maxHr = hcSamples.maxOf { it.second }.coerceIn(avgHr, 240)
+                    val zones = MutableList(5) { 0L }
+                    val secPerSample = (built.movingTimeSeconds.coerceAtLeast(1L).toDouble() / hcSamples.size).coerceAtLeast(1.0)
+                    hcSamples.forEach { (_, bpm) ->
+                        val z = (Formatters.computeHrZone(bpm, profile.maxHr) - 1).coerceIn(0, 4)
+                        zones[z] += secPerSample.roundToInt().toLong()
+                    }
+                    val effort = PerformanceEngine.computeRelativeEffort(
+                        movingSeconds = built.movingTimeSeconds.coerceAtLeast(1L),
+                        avgHr = avgHr,
+                        maxHr = profile.maxHr,
+                        restingHr = profile.restingHr,
+                        perceivedExertion = perceivedExertion,
+                        hrZoneSeconds = zones
+                    )
+                    val hrsUpdatedPts = if (built.decodedPoints.isNotEmpty()) {
+                        val count = built.decodedPoints.size
+                        built.decodedPoints.mapIndexed { idx, pt ->
+                            val frac = if (count > 1) idx.toDouble() / (count - 1) else 0.0
+                            val targetTs = sessionStartMs + ((sessionEndMs - sessionStartMs) * frac).toLong()
+                            val nearestHr = hcSamples.minByOrNull { kotlin.math.abs(it.first - targetTs) }?.second ?: avgHr
+                            pt.copy(hr = nearestHr).toMap()
+                        }
+                    } else built.routePoints
+                    val updatedSplits = built.decodedSplits.map { sp ->
+                        if (sp.avgHr == 0) sp.copy(avgHr = avgHr).toMap() else sp.toMap()
+                    }
+                    built = built.copy(
+                        avgHeartRate = avgHr,
+                        maxHeartRate = maxHr,
+                        hrZoneSeconds = zones,
+                        relativeEffort = effort,
+                        routePoints = hrsUpdatedPts,
+                        splits = updatedSplits,
+                        deviceName = built.deviceName?.takeIf { it != "Phone GPS" } ?: "Wearable + Health Connect"
+                    )
+                }
+            }
             // If Band 11 Pro or phone lacked barometer/altitude data, enrich route elevation via Copernicus DEM 90m
             val pts = built.decodedPoints
             if (pts.size >= 2 && (built.elevationGainMeters < 1.0 || pts.all { kotlin.math.abs(it.ele) < 0.1 })) {
@@ -352,6 +410,9 @@ class MainViewModel(
             }
             val result = repository.saveWorkout(currentUserId, built)
             result.onSuccess { newId ->
+                if (bleState.value.status == BleConnectionStatus.CONNECTED || bleState.value.liveHeartRateBpm > 0) {
+                    syncLiveBleHealthSnapshot()
+                }
                 _events.emit("Activity saved with ${built.elevationSource ?: "GPS"} elevation!")
                 onSaved(newId)
             }.onFailure { err ->
@@ -499,9 +560,10 @@ class MainViewModel(
             _workoutInsightState.value = UiState.Loading
             val profile = (profileState.value as? UiState.Success)?.data ?: AthleteProfile()
             val analytics = analyticsState.value
+            val latestLog = (healthLogsState.value as? UiState.Success)?.data?.firstOrNull()
             try {
                 var finalInsight = ""
-                aiRepository.analyzeWorkoutStream(workout, profile, analytics).collect { streamed ->
+                aiRepository.analyzeWorkoutStream(workout, profile, analytics, latestLog).collect { streamed ->
                     finalInsight = streamed
                     _workoutInsightState.value = UiState.Success(streamed)
                 }
@@ -563,10 +625,12 @@ class MainViewModel(
     fun startLiveVoiceCoach() {
         val profile = (profileState.value as? UiState.Success)?.data ?: AthleteProfile(userId = currentUserId)
         val workouts = (workoutsState.value as? UiState.Success)?.data ?: emptyList()
+        val latestLog = (healthLogsState.value as? UiState.Success)?.data?.firstOrNull()
         liveVoiceCoach.startConversation(
             profile = profile,
             analytics = analyticsState.value,
-            recentWorkouts = workouts
+            recentWorkouts = workouts,
+            latestHealth = latestLog
         )
     }
 

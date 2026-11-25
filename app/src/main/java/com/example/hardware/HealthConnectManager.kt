@@ -19,6 +19,7 @@ import androidx.health.connect.client.records.SpeedRecord
 import androidx.health.connect.client.records.StepsRecord
 import androidx.health.connect.client.records.TotalCaloriesBurnedRecord
 import androidx.health.connect.client.records.Vo2MaxRecord
+import androidx.health.connect.client.request.AggregateRequest
 import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
 import com.example.core.Formatters
@@ -45,8 +46,9 @@ class HealthConnectManager(private val context: Context) {
     val snapshot: StateFlow<HealthConnectSnapshot> = _snapshot.asStateFlow()
 
     companion object {
-        private const val TAG = "HealthConnectMgr"
+        const val TAG = "HealthConnectMgr"
         const val PROVIDER_PACKAGE = "com.google.android.apps.healthdata"
+        const val HUAWEI_HEALTH_PACKAGE = "com.huawei.health"
 
         val CORE_PERMISSIONS: Set<String> = setOf(
             HealthPermission.getReadPermission(StepsRecord::class),
@@ -67,6 +69,14 @@ class HealthConnectManager(private val context: Context) {
             HealthPermission.getReadPermission(Vo2MaxRecord::class),
             "android.permission.health.READ_EXERCISE_ROUTES"
         )
+    }
+
+    fun isHuaweiHealthInstalled(): Boolean {
+        return runCatching {
+            @Suppress("DEPRECATION")
+            appContext.packageManager.getPackageInfo(HUAWEI_HEALTH_PACKAGE, 0)
+            true
+        }.getOrDefault(false)
     }
 
     suspend fun checkAvailabilityAndPermissions(): HealthConnectState {
@@ -108,14 +118,24 @@ class HealthConnectManager(private val context: Context) {
                     Log.w(TAG, "Failed to query Health Connect permissions", e)
                     emptySet()
                 }
+                val missingCount = (REQUIRED_PERMISSIONS - granted).size
+                val huaweiInstalled = isHuaweiHealthInstalled()
                 if (granted.containsAll(CORE_PERMISSIONS)) {
-                    _snapshot.update { it.copy(state = HealthConnectState.AVAILABLE_GRANTED) }
+                    _snapshot.update {
+                        it.copy(
+                            state = HealthConnectState.AVAILABLE_GRANTED,
+                            missingPermissionsCount = missingCount,
+                            huaweiHealthInstalled = huaweiInstalled
+                        )
+                    }
                     HealthConnectState.AVAILABLE_GRANTED
                 } else {
                     _snapshot.update {
                         it.copy(
                             state = HealthConnectState.AVAILABLE_NEEDS_PERMISSION,
-                            lastSyncMessage = "Grant Health Connect access to import all Wearable Device metrics & workouts."
+                            missingPermissionsCount = missingCount,
+                            huaweiHealthInstalled = huaweiInstalled,
+                            lastSyncMessage = "Grant Health Connect access to import Huawei Steps, Sleep, SpO2, HRV & workouts."
                         )
                     }
                     HealthConnectState.AVAILABLE_NEEDS_PERMISSION
@@ -140,98 +160,130 @@ class HealthConnectManager(private val context: Context) {
             val zone = ZoneId.systemDefault()
             val startOfToday = LocalDate.now(zone).atStartOfDay(zone).toInstant()
             val now = Instant.now()
-            val sleepStartWindow = startOfToday.minus(Duration.ofHours(16))
+            val todayRange = TimeRangeFilter.between(startOfToday, now)
+            val sleepStartWindow = startOfToday.minus(Duration.ofHours(20))
+            val vitalLookback = now.minus(Duration.ofHours(48))
             val workoutLookback = now.minus(Duration.ofDays(14))
+            val missingCount = (REQUIRED_PERMISSIONS - granted).size
+            val huaweiInstalled = isHuaweiHealthInstalled()
 
-            // 1. Steps today
+            // Deduplicated daily aggregate metrics (prevents double-counting phone + Huawei Health)
+            val aggregateMetrics = buildSet {
+                add(StepsRecord.COUNT_TOTAL)
+                add(ActiveCaloriesBurnedRecord.ACTIVE_CALORIES_TOTAL)
+                add(TotalCaloriesBurnedRecord.ENERGY_TOTAL)
+                if (granted.contains(HealthPermission.getReadPermission(DistanceRecord::class))) {
+                    add(DistanceRecord.DISTANCE_TOTAL)
+                }
+                if (granted.contains(HealthPermission.getReadPermission(ElevationGainedRecord::class))) {
+                    add(ElevationGainedRecord.ELEVATION_GAINED_TOTAL)
+                }
+            }
+            val aggregated = runCatching {
+                client.aggregate(AggregateRequest(metrics = aggregateMetrics, timeRangeFilter = todayRange))
+            }.getOrNull()
+
+            // 1. Steps today + data origin check
             val stepsResponse = client.readRecords(
-                ReadRecordsRequest(StepsRecord::class, TimeRangeFilter.between(startOfToday, now))
+                ReadRecordsRequest(StepsRecord::class, todayRange)
             )
-            val totalSteps = stepsResponse.records.sumOf { it.count }.toInt()
-            var originPkg = stepsResponse.records.firstOrNull()?.metadata?.dataOrigin?.packageName.orEmpty()
+            val totalSteps = (aggregated?.get(StepsRecord.COUNT_TOTAL)?.toInt()
+                ?: stepsResponse.records.sumOf { it.count }.toInt()).coerceAtLeast(0)
+            val allOrigins = mutableSetOf<String>()
+            stepsResponse.records.forEach { allOrigins.add(it.metadata.dataOrigin.packageName) }
+            aggregated?.dataOrigins?.forEach { allOrigins.add(it.packageName) }
 
             // 2. Daily Distance & Elevation (if permitted)
             val distanceTodayMeters = if (granted.contains(HealthPermission.getReadPermission(DistanceRecord::class))) {
-                runCatching {
-                    client.readRecords(
-                        ReadRecordsRequest(DistanceRecord::class, TimeRangeFilter.between(startOfToday, now))
-                    ).records.sumOf { it.distance.inMeters }
+                aggregated?.get(DistanceRecord.DISTANCE_TOTAL)?.inMeters ?: runCatching {
+                    client.readRecords(ReadRecordsRequest(DistanceRecord::class, todayRange))
+                        .records.sumOf { it.distance.inMeters }
                 }.getOrDefault(0.0)
             } else 0.0
 
             val elevationTodayMeters = if (granted.contains(HealthPermission.getReadPermission(ElevationGainedRecord::class))) {
-                runCatching {
-                    client.readRecords(
-                        ReadRecordsRequest(ElevationGainedRecord::class, TimeRangeFilter.between(startOfToday, now))
-                    ).records.sumOf { it.elevation.inMeters }
+                aggregated?.get(ElevationGainedRecord.ELEVATION_GAINED_TOTAL)?.inMeters ?: runCatching {
+                    client.readRecords(ReadRecordsRequest(ElevationGainedRecord::class, todayRange))
+                        .records.sumOf { it.elevation.inMeters }
                 }.getOrDefault(0.0)
             } else 0.0
 
             // 3. Active & Total Calories today
-            val activeKcal = runCatching {
-                client.readRecords(
-                    ReadRecordsRequest(ActiveCaloriesBurnedRecord::class, TimeRangeFilter.between(startOfToday, now))
-                ).records.sumOf { it.energy.inKilocalories }.toInt()
-            }.getOrDefault(0)
+            val activeKcal = (aggregated?.get(ActiveCaloriesBurnedRecord.ACTIVE_CALORIES_TOTAL)?.inKilocalories?.toInt()
+                ?: runCatching {
+                    client.readRecords(ReadRecordsRequest(ActiveCaloriesBurnedRecord::class, todayRange))
+                        .records.sumOf { it.energy.inKilocalories }.toInt()
+                }.getOrDefault(0)).coerceAtLeast(0)
 
-            val totalKcal = runCatching {
-                client.readRecords(
-                    ReadRecordsRequest(TotalCaloriesBurnedRecord::class, TimeRangeFilter.between(startOfToday, now))
-                ).records.sumOf { it.energy.inKilocalories }.toInt()
-            }.getOrDefault(0).coerceAtLeast(activeKcal)
+            val totalKcal = (aggregated?.get(TotalCaloriesBurnedRecord.ENERGY_TOTAL)?.inKilocalories?.toInt()
+                ?: runCatching {
+                    client.readRecords(ReadRecordsRequest(TotalCaloriesBurnedRecord::class, todayRange))
+                        .records.sumOf { it.energy.inKilocalories }.toInt()
+                }.getOrDefault(0)).coerceAtLeast(activeKcal)
 
             // 4. Heart Rate & Resting HR
             val hrResp = client.readRecords(
-                ReadRecordsRequest(HeartRateRecord::class, TimeRangeFilter.between(startOfToday, now))
+                ReadRecordsRequest(HeartRateRecord::class, todayRange)
             )
+            hrResp.records.forEach { allOrigins.add(it.metadata.dataOrigin.packageName) }
             val allSamples = hrResp.records.flatMap { it.samples }
             val latestHr = allSamples.maxByOrNull { it.time }?.beatsPerMinute?.toInt() ?: 0
             val minHrSample = allSamples.minByOrNull { it.beatsPerMinute }?.beatsPerMinute?.toInt() ?: 0
-            if (originPkg.isBlank()) {
-                originPkg = hrResp.records.firstOrNull()?.metadata?.dataOrigin?.packageName.orEmpty()
-            }
 
             val restingHrExplicit = if (granted.contains(HealthPermission.getReadPermission(RestingHeartRateRecord::class))) {
                 runCatching {
-                    client.readRecords(
-                        ReadRecordsRequest(RestingHeartRateRecord::class, TimeRangeFilter.between(sleepStartWindow, now))
-                    ).records.maxByOrNull { it.time }?.beatsPerMinute?.toInt() ?: 0
+                    val resp = client.readRecords(
+                        ReadRecordsRequest(RestingHeartRateRecord::class, TimeRangeFilter.between(vitalLookback, now))
+                    )
+                    resp.records.forEach { allOrigins.add(it.metadata.dataOrigin.packageName) }
+                    resp.records.maxByOrNull { it.time }?.beatsPerMinute?.toInt() ?: 0
                 }.getOrDefault(0)
             } else 0
             val restingHr = restingHrExplicit.takeIf { it > 0 } ?: minHrSample
 
-            // 5. HRV RMSSD
+            // 5. HRV RMSSD (48h lookback so morning/overnight watch measurement is always found)
             val hrvMs = if (granted.contains(HealthPermission.getReadPermission(HeartRateVariabilityRmssdRecord::class))) {
                 runCatching {
-                    client.readRecords(
-                        ReadRecordsRequest(HeartRateVariabilityRmssdRecord::class, TimeRangeFilter.between(sleepStartWindow, now))
-                    ).records.maxByOrNull { it.time }?.heartRateVariabilityMillis ?: 0.0
+                    val resp = client.readRecords(
+                        ReadRecordsRequest(HeartRateVariabilityRmssdRecord::class, TimeRangeFilter.between(vitalLookback, now))
+                    )
+                    resp.records.forEach { allOrigins.add(it.metadata.dataOrigin.packageName) }
+                    resp.records.maxByOrNull { it.time }?.heartRateVariabilityMillis ?: 0.0
                 }.getOrDefault(0.0)
             } else 0.0
 
-            // 6. SpO2 Blood Oxygen Saturation (HUAWEI Band 11 Pro vital metric)
+            // 6. SpO2 Blood Oxygen Saturation (HUAWEI Band 11 Pro vital metric, 48h lookback)
             val spo2Pct = if (granted.contains(HealthPermission.getReadPermission(OxygenSaturationRecord::class))) {
                 runCatching {
-                    client.readRecords(
-                        ReadRecordsRequest(OxygenSaturationRecord::class, TimeRangeFilter.between(sleepStartWindow, now))
-                    ).records.maxByOrNull { it.time }?.percentage?.value ?: 0.0
+                    val resp = client.readRecords(
+                        ReadRecordsRequest(OxygenSaturationRecord::class, TimeRangeFilter.between(vitalLookback, now))
+                    )
+                    resp.records.forEach { allOrigins.add(it.metadata.dataOrigin.packageName) }
+                    resp.records.maxByOrNull { it.time }?.percentage?.value ?: 0.0
                 }.getOrDefault(0.0)
             } else 0.0
 
             // 7. Native Band VO2 Max (if Huawei Health synced VO2 Max)
             val vo2FromBand = if (granted.contains(HealthPermission.getReadPermission(Vo2MaxRecord::class))) {
                 runCatching {
-                    client.readRecords(
+                    val resp = client.readRecords(
                         ReadRecordsRequest(Vo2MaxRecord::class, TimeRangeFilter.between(workoutLookback, now))
-                    ).records.maxByOrNull { it.time }?.vo2MillilitersPerMinuteKilogram ?: 0.0
+                    )
+                    resp.records.forEach { allOrigins.add(it.metadata.dataOrigin.packageName) }
+                    resp.records.maxByOrNull { it.time }?.vo2MillilitersPerMinuteKilogram ?: 0.0
                 }.getOrDefault(0.0)
             } else 0.0
 
-            // 8. Sleep Session & Stages (Awake / Light / Deep / REM)
-            val sleepResp = client.readRecords(
+            // 8. Sleep Session & Stages (Awake / Light / Deep / REM) — try last night first, fall back to 48h
+            val recentSleepRecords = client.readRecords(
                 ReadRecordsRequest(SleepSessionRecord::class, TimeRangeFilter.between(sleepStartWindow, now))
-            )
-            val latestSleep = sleepResp.records.maxByOrNull { it.endTime }
+            ).records.ifEmpty {
+                client.readRecords(
+                    ReadRecordsRequest(SleepSessionRecord::class, TimeRangeFilter.between(vitalLookback, now))
+                ).records
+            }
+            recentSleepRecords.forEach { allOrigins.add(it.metadata.dataOrigin.packageName) }
+            val latestSleep = recentSleepRecords.maxByOrNull { it.endTime }
             var sleepTotalMin = 0
             var deepMin = 0
             var lightMin = 0
@@ -264,6 +316,7 @@ class HealthConnectManager(private val context: Context) {
                     ReadRecordsRequest(ExerciseSessionRecord::class, TimeRangeFilter.between(workoutLookback, now))
                 ).records
             }.getOrDefault(emptyList())
+            exerciseResp.forEach { allOrigins.add(it.metadata.dataOrigin.packageName) }
 
             val importedSessions = exerciseResp
                 .sortedByDescending { it.startTime }
@@ -272,7 +325,16 @@ class HealthConnectManager(private val context: Context) {
                     extractExerciseSession(client, granted, session, maxHrBaseline)
                 }
 
-            val sourceLabel = if (originPkg.contains("huawei", true)) "Wearable Device / Health Connect" else "Health Connect"
+            val huaweiOrigin = allOrigins.firstOrNull { it.contains("huawei", ignoreCase = true) }
+            val originPkg = huaweiOrigin ?: allOrigins.firstOrNull { it.isNotBlank() }.orEmpty()
+            val sourceLabel = if (huaweiOrigin != null) "Huawei Health / Band" else "Health Connect"
+            val summaryParts = buildList {
+                if (totalSteps > 0) add("$totalSteps steps")
+                if (sleepTotalMin > 0) add("${sleepTotalMin / 60}h${sleepTotalMin % 60}m sleep")
+                if (spo2Pct > 0.0) add("SpO2 ${((spo2Pct * 10.0).roundToInt() / 10.0)}%")
+                if (importedSessions.isNotEmpty()) add("${importedSessions.size} workouts")
+            }
+
             val updated = HealthConnectSnapshot(
                 state = HealthConnectState.AVAILABLE_GRANTED,
                 stepsToday = totalSteps,
@@ -292,10 +354,12 @@ class HealthConnectManager(private val context: Context) {
                 sleepAwakeMinutes = awakeMin,
                 importedExercises = importedSessions,
                 dataOriginPackage = originPkg.ifBlank { "Health Connect" },
-                lastSyncMessage = if (totalSteps > 0 || sleepTotalMin > 0 || latestHr > 0 || importedSessions.isNotEmpty()) {
-                    "Synced $sourceLabel (${importedSessions.size} workouts, $totalSteps steps)"
+                missingPermissionsCount = missingCount,
+                huaweiHealthInstalled = huaweiInstalled,
+                lastSyncMessage = if (summaryParts.isNotEmpty()) {
+                    "Synced $sourceLabel (${summaryParts.joinToString(", ")})"
                 } else {
-                    "Health Connect ready (no Wearable Device records in window yet)"
+                    "Health Connect ready — enable Data Sharing in Huawei Health to push Steps, Sleep & SpO2"
                 }
             )
             _snapshot.value = updated
@@ -305,6 +369,31 @@ class HealthConnectManager(private val context: Context) {
             _snapshot.update { it.copy(lastSyncMessage = "Sync error: ${e.localizedMessage}") }
             Result.failure(e)
         }
+    }
+
+    /**
+     * Reads wearable HeartRateRecord samples from Health Connect overlapping a recorded activity window.
+     * Used as automatic post-workout enrichment if live BLE HR Broadcast was not enabled during recording.
+     */
+    suspend fun readHeartRateForWindow(startMs: Long, endMs: Long): List<Pair<Long, Int>> {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P || endMs <= startMs) return emptyList()
+        if (checkAvailabilityAndPermissions() != HealthConnectState.AVAILABLE_GRANTED) return emptyList()
+        return runCatching {
+            val client = HealthConnectClient.getOrCreate(appContext)
+            val granted = client.permissionController.getGrantedPermissions()
+            if (!granted.contains(HealthPermission.getReadPermission(HeartRateRecord::class))) {
+                return emptyList()
+            }
+            val start = Instant.ofEpochMilli((startMs - 30_000L).coerceAtLeast(0L))
+            val end = Instant.ofEpochMilli(endMs + 30_000L)
+            client.readRecords(
+                ReadRecordsRequest(HeartRateRecord::class, TimeRangeFilter.between(start, end))
+            ).records
+                .flatMap { it.samples }
+                .map { it.time.toEpochMilli() to it.beatsPerMinute.toInt() }
+                .filter { it.second in 35..235 }
+                .sortedBy { it.first }
+        }.getOrDefault(emptyList())
     }
 
     private suspend fun extractExerciseSession(

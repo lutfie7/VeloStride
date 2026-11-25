@@ -373,7 +373,23 @@ fun WearablesScreen(viewModel: MainViewModel) {
                                 value = if (ble.hrvRmssdMs > 0) "${ble.hrvRmssdMs} ms" else "--",
                                 valueColor = SignalCyan
                             )
+                            MetricCell(
+                                label = "SpO2",
+                                value = if (ble.liveSpo2Percent > 0.0) "${ble.liveSpo2Percent}%" else "--",
+                                valueColor = EmeraldPeak
+                            )
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
                             MetricCell("Cadence", if (ble.liveCadenceSpm > 0) "${ble.liveCadenceSpm} spm" else "--")
+                            MetricCell(
+                                "BLE Speed",
+                                if (ble.liveSpeedKmh > 0.1) String.format("%.1f km/h", ble.liveSpeedKmh) else "--"
+                            )
+                            MetricCell("BLE Steps", if (ble.sessionBleSteps > 0) "${ble.sessionBleSteps}" else "--")
                             MetricCell("BLE Kcal", "${ble.sessionBleCalories}")
                         }
 
@@ -397,11 +413,26 @@ fun WearablesScreen(viewModel: MainViewModel) {
                             }
                         }
 
+                        if (ble.status == BleConnectionStatus.CONNECTED && ble.liveHeartRateBpm == 0) {
+                            OutlinedButton(
+                                onClick = { viewModel.bleManager.refreshConnectedServices() },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 48.dp)
+                                    .testTag("refresh_gatt_btn")
+                            ) {
+                                Icon(Icons.Rounded.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Refresh GATT Services (after enabling HR Broadcast)")
+                            }
+                        }
+
                         Button(
                             onClick = { viewModel.syncLiveBleHealthSnapshot() },
                             colors = ButtonDefaults.buttonColors(containerColor = SignalCyan, contentColor = MaterialTheme.colorScheme.onSecondary),
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .heightIn(min = 48.dp)
                                 .testTag("save_ble_snapshot_btn")
                         ) {
                             Icon(Icons.Rounded.CloudUpload, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -614,11 +645,30 @@ fun WearablesScreen(viewModel: MainViewModel) {
                         }
                     }
 
+                    if (hc.state == HealthConnectState.AVAILABLE_GRANTED &&
+                        hc.missingPermissionsCount > 0 &&
+                        hcPermissionLauncher != null
+                    ) {
+                        OutlinedButton(
+                            onClick = { hcPermissionLauncher.launch(HealthConnectManager.REQUIRED_PERMISSIONS) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 48.dp)
+                                .testTag("grant_missing_hc_perms_btn")
+                        ) {
+                            Icon(Icons.Rounded.HealthAndSafety, contentDescription = null, modifier = Modifier.size(18.dp), tint = VeloOrange)
+                            Spacer(Modifier.width(6.dp))
+                            Text("Grant SpO2, HRV & VO2 Max (${hc.missingPermissionsCount} left)")
+                        }
+                    }
+
                     val steps = maxOf(hc.stepsToday, latestLog?.steps ?: 0) + ble.sessionBleSteps
                     val activeCal = maxOf(hc.activeCaloriesToday, latestLog?.activeCalories ?: 0) + ble.sessionBleCalories
                     val rhr = hc.restingHeartRateBpm.takeIf { it > 0 } ?: (latestLog?.restingHr ?: 0)
                     val sleepMin = maxOf(hc.sleepTotalMinutes, latestLog?.sleepTotalMinutes ?: 0)
                     val spo2 = maxOf(hc.spo2Percent, latestLog?.spo2Percent ?: 0.0)
+                    val hrv = maxOf(hc.hrvRmssdMs, latestLog?.hrvRmssdMs ?: 0.0)
+                    val watchVo2 = maxOf(hc.vo2MaxFromBand, latestLog?.vo2MaxEstimate ?: 0.0)
                     val dailyDistKm = maxOf(hc.distanceMetersToday, latestLog?.distanceMetersToday ?: 0.0) / 1000.0
 
                     Row(
@@ -636,9 +686,38 @@ fun WearablesScreen(viewModel: MainViewModel) {
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         MetricCell("SpO2", if (spo2 > 0) "${spo2}%" else "--", valueColor = SignalCyan)
+                        MetricCell("HRV", if (hrv > 0.0) "${hrv} ms" else "--", valueColor = EmeraldPeak)
+                        MetricCell("Watch VO2", if (watchVo2 > 10.0) "$watchVo2" else "--")
                         MetricCell("Dist Today", if (dailyDistKm > 0) String.format("%.2f km", dailyDistKm) else "--")
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
                         MetricCell("Workouts", "${hc.importedExercises.size} synced")
                         MetricCell("Elev", if (hc.elevationGainedToday > 0) "${hc.elevationGainedToday.toInt()}m" else "DEM Auto")
+                        MetricCell(
+                            "Source",
+                            if (hc.dataOriginPackage.contains("huawei", true)) "Huawei Health"
+                            else if (hc.dataOriginPackage.isNotBlank()) hc.dataOriginPackage.substringAfterLast('.')
+                            else "--"
+                        )
+                    }
+
+                    if (hc.huaweiHealthInstalled && hc.stepsToday == 0 && hc.sleepTotalMinutes == 0) {
+                        Surface(
+                            color = VeloOrange.copy(alpha = 0.12f),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = "Huawei Health detected: open Huawei Health -> Me -> Settings -> Privacy / Data Sharing -> Health Connect, and enable Steps, Sleep, Heart Rate, SpO2 & Workouts.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.padding(10.dp)
+                            )
+                        }
                     }
 
                     val deep = maxOf(hc.sleepDeepMinutes, latestLog?.sleepDeepMinutes ?: 0)

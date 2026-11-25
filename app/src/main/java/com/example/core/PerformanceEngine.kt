@@ -38,7 +38,9 @@ object PerformanceEngine {
         }.take(6)
 
         if (recentRuns.isEmpty()) {
-            return (hrRatioVo2 * 10.0).roundToInt() / 10.0
+            val watchVo2 = latestHealthLog?.vo2MaxEstimate?.takeIf { it in 25.0..85.0 }
+            val est = if (watchVo2 != null) (watchVo2 * 0.65 + hrRatioVo2 * 0.35) else hrRatioVo2
+            return (est.coerceIn(28.0, 82.0) * 10.0).roundToInt() / 10.0
         }
 
         val runVo2Estimates = recentRuns.map { run ->
@@ -61,7 +63,12 @@ object PerformanceEngine {
         }
 
         val avgRunVo2 = runVo2Estimates.average()
-        val blended = avgRunVo2 * 0.78 + hrRatioVo2 * 0.22
+        val watchVo2 = latestHealthLog?.vo2MaxEstimate?.takeIf { it in 25.0..85.0 }
+        val blended = if (watchVo2 != null) {
+            avgRunVo2 * 0.60 + watchVo2 * 0.25 + hrRatioVo2 * 0.15
+        } else {
+            avgRunVo2 * 0.78 + hrRatioVo2 * 0.22
+        }
         return (blended.coerceIn(28.0, 82.0) * 10.0).roundToInt() / 10.0
     }
 
@@ -176,11 +183,18 @@ object PerformanceEngine {
         val sleepMins = latestHealth?.sleepTotalMinutes ?: 420
         val sleepScore = latestHealth?.sleepScore ?: ((sleepMins / 480.0) * 90.0).roundToInt().coerceIn(45, 98)
 
-        // Recovery Score (0..100): Sleep (35%) + HRV (30%) + TSB Form (35%)
+        val effectiveSpo2 = latestHealth?.spo2Percent?.takeIf { it in 70.0..100.0 } ?: 0.0
+        val spo2Adjustment = when {
+            effectiveSpo2 in 70.0..93.9 -> -8.0
+            effectiveSpo2 >= 96.0 -> 2.0
+            else -> 0.0
+        }
+
+        // Recovery Score (0..100): Sleep (35%) + HRV (30%) + TSB Form (35%) + SpO2 modifier
         val sleepComponent = ((sleepScore / 100.0) * 35.0).coerceIn(10.0, 35.0)
         val hrvComponent = (((effectiveHrv - 25.0) / 65.0) * 30.0).coerceIn(8.0, 30.0)
         val tsbComponent = (((currentPoint.formTsb + 25.0) / 45.0) * 35.0).coerceIn(5.0, 35.0)
-        val recoveryScore = (sleepComponent + hrvComponent + tsbComponent).roundToInt().coerceIn(12, 99)
+        val recoveryScore = (sleepComponent + hrvComponent + tsbComponent + spo2Adjustment).roundToInt().coerceIn(12, 99)
 
         val recoveryStatus = when {
             recoveryScore >= 75 -> "Primed for Intensity"
@@ -234,6 +248,10 @@ object PerformanceEngine {
             hrvRmssdMs = (effectiveHrv * 10.0).roundToInt() / 10.0,
             sleepMinutes = sleepMins,
             sleepScore = sleepScore,
+            spo2Percent = effectiveSpo2,
+            stepsToday = latestHealth?.steps ?: 0,
+            restingHr = latestHealth?.restingHr?.takeIf { it > 0 } ?: profile.restingHr,
+            activeCalories = latestHealth?.activeCalories ?: 0,
             trainingSeries = last14,
             personalRecords = prs
         )

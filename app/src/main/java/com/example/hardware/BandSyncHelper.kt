@@ -188,6 +188,7 @@ object BandSyncHelper {
         bleCalories: Int = 0,
         bleHr: Int = 0,
         bleHrv: Double = 0.0,
+        bleSpo2: Double = 0.0,
         bleDeviceName: String? = null,
     ): DailyHealthLog {
         val todayKey = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
@@ -197,8 +198,10 @@ object BandSyncHelper {
             (((sleepTotal / 480.0) * 75.0) + (deepPct * 80.0)).roundToInt().coerceIn(35, 99)
         } else 0
         val source = when {
+            hc.dataOriginPackage.contains("huawei", true) && bleDeviceName != null ->
+                "$bleDeviceName + Huawei Health"
             bleDeviceName != null -> bleDeviceName
-            hc.dataOriginPackage.contains("huawei", true) -> "Wearable Device (Health Connect)"
+            hc.dataOriginPackage.contains("huawei", true) -> "Huawei Health / Wearable Device"
             else -> "Health Connect"
         }
         return DailyHealthLog(
@@ -207,11 +210,11 @@ object BandSyncHelper {
             steps = hc.stepsToday + bleSteps,
             distanceMetersToday = hc.distanceMetersToday,
             activeCalories = hc.activeCaloriesToday + bleCalories,
-            totalCalories = hc.totalCaloriesToday + bleCalories,
+            totalCalories = (hc.totalCaloriesToday + bleCalories).coerceAtLeast(hc.activeCaloriesToday + bleCalories),
             restingHr = hc.restingHeartRateBpm.takeIf { it > 0 } ?: restingHrFallback,
             latestHr = bleHr.takeIf { it > 0 } ?: hc.latestHeartRateBpm,
             hrvRmssdMs = bleHrv.takeIf { it > 0.0 } ?: hc.hrvRmssdMs,
-            spo2Percent = hc.spo2Percent,
+            spo2Percent = hc.spo2Percent.takeIf { it > 0.0 } ?: bleSpo2,
             sleepTotalMinutes = sleepTotal,
             sleepDeepMinutes = hc.sleepDeepMinutes,
             sleepLightMinutes = hc.sleepLightMinutes,
