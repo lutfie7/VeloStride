@@ -412,6 +412,8 @@ data class BleDeviceCandidate(
     val manufacturerName: String,
     val advertisedServices: List<String>,
     val isBonded: Boolean = false,
+    val isLiveScan: Boolean = false,
+    val deviceTypeLabel: String = "",
 )
 
 data class BleTelemetryState(

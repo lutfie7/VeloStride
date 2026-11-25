@@ -5,6 +5,7 @@ import com.example.data.model.GearItem
 import com.example.data.model.SportType
 import com.example.data.model.WorkoutActivity
 import com.example.data.model.toSessionSummary
+import com.example.data.repository.VeloStrideRepository
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -64,5 +65,13 @@ class GearAndActivityEditTest {
         assertEquals(2, summary.mediaCount)
         assertTrue(summary.privateActivity)
         assertEquals("Trail Runner", summary.gearName)
+    }
+
+    @Test
+    fun computeDecrementedDistanceMeters_subtractsAndClampsAtZero() {
+        assertEquals(12_500.0, VeloStrideRepository.computeDecrementedDistanceMeters(20_000.0, 7_500.0), 0.01)
+        assertEquals(0.0, VeloStrideRepository.computeDecrementedDistanceMeters(5_000.0, 8_200.0), 0.01)
+        assertEquals(0.0, VeloStrideRepository.computeDecrementedDistanceMeters(-100.0, 500.0), 0.01)
+        assertEquals(10_000.0, VeloStrideRepository.computeDecrementedDistanceMeters(10_000.0, -300.0), 0.01)
     }
 }

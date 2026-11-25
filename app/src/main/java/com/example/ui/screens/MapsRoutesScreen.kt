@@ -114,8 +114,10 @@ import com.example.data.model.TrackPoint
 import com.example.data.model.UiState
 import com.example.data.model.WorkoutActivity
 import com.example.ui.MainViewModel
+import com.example.ui.components.FullScreenMapDialog
 import com.example.ui.components.MapAttributionBadge
 import com.example.ui.components.MapControlsOverlay
+import com.example.ui.components.MapFullscreenButton
 import com.example.ui.components.MapTileBackground
 import com.example.ui.components.MetricCell
 import com.example.ui.components.MultiTrackMapCanvas
@@ -441,6 +443,8 @@ private fun RouteExplorerList(
                         Spacer(Modifier.height(10.dp))
                         RoutePolylineCanvas(
                             points = route.decodedWaypoints,
+                            fullscreenTitle = route.name,
+                            testTagPrefix = "explorer_map_${route.id}",
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(172.dp)
@@ -719,6 +723,7 @@ private fun InteractiveRouteBuilder(
     var routeName by remember { mutableStateOf("") }
     var selectedSport by remember { mutableStateOf(SportType.RUN) }
     var surfaceType by remember { mutableStateOf("Paved") }
+    var isMapFullscreen by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         if (workoutSeed == null) {
@@ -756,6 +761,212 @@ private fun InteractiveRouteBuilder(
         if (trackPoints.size < 2) 0.0
         else (1 until trackPoints.size).sumOf { idx ->
             (trackPoints[idx].ele - trackPoints[idx - 1].ele).coerceAtLeast(0.0)
+        }
+    }
+
+    @Composable
+    fun RenderRouteBuilderCanvas(
+        containerModifier: Modifier,
+        overlayInsetModifier: Modifier,
+        isCurrentlyFullscreen: Boolean,
+        onToggleFullscreen: () -> Unit,
+        tagPrefix: String,
+    ) {
+        BoxWithConstraints(
+            modifier = containerModifier
+                .background(if (selectedLayer == MapLayerType.DARK || darkTheme) Color(0xFF10151E) else Color(0xFFECEAE4))
+        ) {
+            val widthPx = with(density) { maxWidth.toPx() }.coerceAtLeast(16f)
+            val heightPx = with(density) { maxHeight.toPx() }.coerceAtLeast(16f)
+
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clipToBounds()
+                    .mapTransformGestures(
+                        gestureKey = Unit,
+                        allowOneFingerPan = true
+                    ) { centroid, pan, zoom, rotation ->
+                        if (rotation != 0f) {
+                            bearingDeg = ((bearingDeg + rotation) % 360f)
+                        }
+                        var next = activeViewport
+                        if (zoom != 1f) {
+                            next = MapProjection.zoomAroundFocus(
+                                viewport = next,
+                                focusX = centroid.x,
+                                focusY = centroid.y,
+                                widthPx = widthPx,
+                                heightPx = heightPx,
+                                zoomFactor = zoom,
+                                bearingDeg = bearingDeg
+                            )
+                        }
+                        if (pan != Offset.Zero) {
+                            next = MapProjection.panViewport(next, pan.x, pan.y, bearingDeg)
+                        }
+                        activeViewport = next
+                    }
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer {
+                            if (is3DView) {
+                                rotationX = 32f
+                                cameraDistance = 24f * density.density
+                                scaleX = 1.16f
+                                scaleY = 1.16f
+                            }
+                            rotationZ = bearingDeg
+                        }
+                ) {
+                    MapTileBackground(
+                        viewport = activeViewport,
+                        widthPx = widthPx,
+                        heightPx = heightPx,
+                        darkTheme = darkTheme,
+                        layerType = selectedLayer
+                    )
+
+                    Canvas(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .pointerInput(activeViewport) {
+                                detectTapGestures { tap ->
+                                    val w = size.width.toFloat().coerceAtLeast(1f)
+                                    val h = size.height.toFloat().coerceAtLeast(1f)
+                                    val (lat, lng) = MapProjection.unproject(tap.x, tap.y, activeViewport, w, h)
+                                    val ele = 18.0 + abs(sin((lat + lng) * 120.0)) * 65.0
+                                    trackPoints.add(TrackPoint(lat = lat, lng = lng, ele = ele, hr = 0))
+                                }
+                            }
+                            .testTag(if (isCurrentlyFullscreen) "route_builder_fullscreen_canvas" else "route_builder_canvas")
+                    ) {
+                        val mapped = trackPoints.map { pt ->
+                            val (px, py) = MapProjection.project(pt.lat, pt.lng, activeViewport, size.width, size.height)
+                            Offset(px, py)
+                        }
+                        if (mapped.size >= 2) {
+                            val path = Path().apply {
+                                moveTo(mapped.first().x, mapped.first().y)
+                                for (i in 1 until mapped.size) {
+                                    lineTo(mapped[i].x, mapped[i].y)
+                                }
+                            }
+                            drawPath(
+                                path,
+                                Color.Black.copy(alpha = if (selectedLayer == MapLayerType.DARK) 0.45f else 0.25f),
+                                style = Stroke(width = 12f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                            )
+                            drawPath(
+                                path,
+                                VeloOrange.copy(alpha = 0.28f),
+                                style = Stroke(width = 16f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                            )
+                            drawPath(
+                                path,
+                                VeloOrange,
+                                style = Stroke(width = 6f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                            )
+                        }
+                        mapped.forEachIndexed { index, pt ->
+                            val color = when {
+                                index == 0 -> EmeraldPeak
+                                index == mapped.lastIndex -> Color(0xFFEF4444)
+                                else -> SignalCyan
+                            }
+                            drawCircle(color, radius = 10f, center = pt)
+                            drawCircle(Color.White, radius = 4f, center = pt)
+                        }
+                    }
+                }
+            }
+
+            if (!isCurrentlyFullscreen) {
+                Surface(
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(8.dp)
+                ) {
+                    Text(
+                        text = "Zoom ${activeViewport.zoom}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+            } else {
+                // Fullscreen Route Builder quick actions (Undo / Clear) anchored neatly at TopStart below title pill
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = overlayInsetModifier
+                        .align(Alignment.TopStart)
+                        .padding(start = 10.dp, top = 74.dp)
+                ) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.90f),
+                        shape = RoundedCornerShape(10.dp),
+                        tonalElevation = 2.dp
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(
+                                onClick = {
+                                    if (trackPoints.isNotEmpty()) trackPoints.removeAt(trackPoints.lastIndex)
+                                },
+                                enabled = trackPoints.isNotEmpty()
+                            ) {
+                                Icon(Icons.Rounded.Undo, contentDescription = "Undo waypoint")
+                            }
+                            IconButton(
+                                onClick = { trackPoints.clear() },
+                                enabled = trackPoints.isNotEmpty()
+                            ) {
+                                Icon(Icons.Rounded.Clear, contentDescription = "Clear route")
+                            }
+                        }
+                    }
+                }
+            }
+
+            MapControlsOverlay(
+                layerType = selectedLayer,
+                onSelectLayer = { selectedLayer = it },
+                is3DView = is3DView,
+                onToggle3D = { is3DView = !is3DView },
+                bearingDeg = bearingDeg,
+                onResetNorth = { bearingDeg = 0f },
+                onZoomIn = { activeViewport = MapProjection.zoomViewport(activeViewport, 1.45f) },
+                onZoomOut = { activeViewport = MapProjection.zoomViewport(activeViewport, 0.70f) },
+                isTransformed = isTransformed,
+                onResetView = {
+                    activeViewport = baseViewport
+                    bearingDeg = 0f
+                },
+                testTagPrefix = tagPrefix,
+                modifier = overlayInsetModifier
+                    .align(Alignment.TopEnd)
+                    .padding(8.dp)
+            )
+
+            MapAttributionBadge(
+                darkTheme = darkTheme,
+                layerType = selectedLayer,
+                modifier = overlayInsetModifier
+                    .align(Alignment.BottomStart)
+                    .padding(8.dp)
+            )
+
+            MapFullscreenButton(
+                isFullscreen = isCurrentlyFullscreen,
+                onClick = onToggleFullscreen,
+                testTag = if (isCurrentlyFullscreen) "builder_map_exit_fullscreen_btn" else "builder_map_fullscreen_btn",
+                modifier = overlayInsetModifier
+                    .align(Alignment.BottomEnd)
+                    .padding(8.dp)
+            )
         }
     }
 
@@ -807,163 +1018,16 @@ private fun InteractiveRouteBuilder(
 
                     Spacer(Modifier.height(10.dp))
 
-                    BoxWithConstraints(
-                        modifier = Modifier
+                    RenderRouteBuilderCanvas(
+                        containerModifier = Modifier
                             .fillMaxWidth()
                             .height(290.dp)
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(if (selectedLayer == MapLayerType.DARK || darkTheme) Color(0xFF10151E) else Color(0xFFECEAE4))
-                    ) {
-                        val widthPx = with(density) { maxWidth.toPx() }.coerceAtLeast(16f)
-                        val heightPx = with(density) { maxHeight.toPx() }.coerceAtLeast(16f)
-
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .clipToBounds()
-                                .mapTransformGestures(
-                                    gestureKey = Unit,
-                                    allowOneFingerPan = true
-                                ) { centroid, pan, zoom, rotation ->
-                                    if (rotation != 0f) {
-                                        bearingDeg = ((bearingDeg + rotation) % 360f)
-                                    }
-                                    var next = activeViewport
-                                    if (zoom != 1f) {
-                                        next = MapProjection.zoomAroundFocus(
-                                            viewport = next,
-                                            focusX = centroid.x,
-                                            focusY = centroid.y,
-                                            widthPx = widthPx,
-                                            heightPx = heightPx,
-                                            zoomFactor = zoom,
-                                            bearingDeg = bearingDeg
-                                        )
-                                    }
-                                    if (pan != Offset.Zero) {
-                                        next = MapProjection.panViewport(next, pan.x, pan.y, bearingDeg)
-                                    }
-                                    activeViewport = next
-                                }
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .graphicsLayer {
-                                        if (is3DView) {
-                                            rotationX = 32f
-                                            cameraDistance = 24f * density.density
-                                            scaleX = 1.16f
-                                            scaleY = 1.16f
-                                        }
-                                        rotationZ = bearingDeg
-                                    }
-                            ) {
-                                MapTileBackground(
-                                    viewport = activeViewport,
-                                    widthPx = widthPx,
-                                    heightPx = heightPx,
-                                    darkTheme = darkTheme,
-                                    layerType = selectedLayer
-                                )
-
-                                Canvas(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .pointerInput(activeViewport) {
-                                            detectTapGestures { tap ->
-                                                val w = size.width.toFloat().coerceAtLeast(1f)
-                                                val h = size.height.toFloat().coerceAtLeast(1f)
-                                                val (lat, lng) = MapProjection.unproject(tap.x, tap.y, activeViewport, w, h)
-                                                val ele = 18.0 + abs(sin((lat + lng) * 120.0)) * 65.0
-                                                trackPoints.add(TrackPoint(lat = lat, lng = lng, ele = ele, hr = 0))
-                                            }
-                                        }
-                                        .testTag("route_builder_canvas")
-                                ) {
-                                    val mapped = trackPoints.map { pt ->
-                                        val (px, py) = MapProjection.project(pt.lat, pt.lng, activeViewport, size.width, size.height)
-                                        Offset(px, py)
-                                    }
-                                    if (mapped.size >= 2) {
-                                        val path = Path().apply {
-                                            moveTo(mapped.first().x, mapped.first().y)
-                                            for (i in 1 until mapped.size) {
-                                                lineTo(mapped[i].x, mapped[i].y)
-                                            }
-                                        }
-                                        drawPath(
-                                            path,
-                                            Color.Black.copy(alpha = if (selectedLayer == MapLayerType.DARK) 0.45f else 0.25f),
-                                            style = Stroke(width = 12f, cap = StrokeCap.Round, join = StrokeJoin.Round)
-                                        )
-                                        drawPath(
-                                            path,
-                                            VeloOrange.copy(alpha = 0.28f),
-                                            style = Stroke(width = 16f, cap = StrokeCap.Round, join = StrokeJoin.Round)
-                                        )
-                                        drawPath(
-                                            path,
-                                            VeloOrange,
-                                            style = Stroke(width = 6f, cap = StrokeCap.Round, join = StrokeJoin.Round)
-                                        )
-                                    }
-                                    mapped.forEachIndexed { index, pt ->
-                                        val color = when {
-                                            index == 0 -> EmeraldPeak
-                                            index == mapped.lastIndex -> Color(0xFFEF4444)
-                                            else -> SignalCyan
-                                        }
-                                        drawCircle(color, radius = 10f, center = pt)
-                                        drawCircle(Color.White, radius = 4f, center = pt)
-                                    }
-                                }
-                            }
-                        }
-
-                        Surface(
-                            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier
-                                .align(Alignment.TopStart)
-                                .padding(8.dp)
-                        ) {
-                            Text(
-                                text = "Zoom ${activeViewport.zoom}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurface,
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                            )
-                        }
-
-                        MapControlsOverlay(
-                            layerType = selectedLayer,
-                            onSelectLayer = { selectedLayer = it },
-                            is3DView = is3DView,
-                            onToggle3D = { is3DView = !is3DView },
-                            bearingDeg = bearingDeg,
-                            onResetNorth = { bearingDeg = 0f },
-                            onZoomIn = { activeViewport = MapProjection.zoomViewport(activeViewport, 1.45f) },
-                            onZoomOut = { activeViewport = MapProjection.zoomViewport(activeViewport, 0.70f) },
-                            isTransformed = isTransformed,
-                            onResetView = {
-                                activeViewport = baseViewport
-                                bearingDeg = 0f
-                            },
-                            testTagPrefix = "builder_map",
-                            modifier = Modifier
-                                .align(Alignment.TopEnd)
-                                .padding(8.dp)
-                        )
-
-                        MapAttributionBadge(
-                            darkTheme = darkTheme,
-                            layerType = selectedLayer,
-                            modifier = Modifier
-                                .align(Alignment.BottomEnd)
-                                .padding(8.dp)
-                        )
-                    }
+                            .clip(RoundedCornerShape(14.dp)),
+                        overlayInsetModifier = Modifier,
+                        isCurrentlyFullscreen = false,
+                        onToggleFullscreen = { isMapFullscreen = true },
+                        tagPrefix = "builder_map"
+                    )
 
                     Spacer(Modifier.height(12.dp))
                     Row(
@@ -1030,6 +1094,22 @@ private fun InteractiveRouteBuilder(
                     }
                 }
             }
+        }
+    }
+
+    if (isMapFullscreen) {
+        FullScreenMapDialog(
+            title = routeName.ifBlank { "Route Builder" },
+            subtitle = "${Formatters.formatDistanceKm(totalDistanceMeters)} • ${trackPoints.size} pts • Tap to add waypoint",
+            onDismiss = { isMapFullscreen = false }
+        ) { insetModifier ->
+            RenderRouteBuilderCanvas(
+                containerModifier = Modifier.fillMaxSize(),
+                overlayInsetModifier = insetModifier,
+                isCurrentlyFullscreen = true,
+                onToggleFullscreen = { isMapFullscreen = false },
+                tagPrefix = "builder_map_full"
+            )
         }
     }
 }

@@ -218,6 +218,8 @@ fun ActivityDetailScreen(
                         }
                         RoutePolylineCanvas(
                             points = workout.decodedPoints,
+                            fullscreenTitle = workout.title,
+                            testTagPrefix = "detail_map",
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(390.dp)

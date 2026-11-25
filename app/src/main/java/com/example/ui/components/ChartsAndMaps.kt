@@ -1,6 +1,7 @@
 package com.example.ui.components
 
 import android.annotation.SuppressLint
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -17,17 +18,23 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.CenterFocusStrong
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Fullscreen
+import androidx.compose.material.icons.rounded.FullscreenExit
 import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material.icons.rounded.Navigation
 import androidx.compose.material.icons.rounded.Remove
@@ -35,6 +42,7 @@ import androidx.compose.material.icons.rounded.ViewInAr
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -72,12 +80,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.example.core.Formatters
 import com.example.core.MapLayerType
 import com.example.core.MapProjection
 import com.example.core.MapViewport
+import com.example.core.rememberAppStrings
 import com.example.data.model.FitnessLoadPoint
 import com.example.data.model.TrackPoint
 import com.example.ui.theme.AmberZone
@@ -430,6 +441,106 @@ fun MapControlsOverlay(
     }
 }
 
+@Composable
+fun MapFullscreenButton(
+    isFullscreen: Boolean,
+    onClick: () -> Unit,
+    testTag: String,
+    modifier: Modifier = Modifier,
+) {
+    val strings = rememberAppStrings()
+    Surface(
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+        shape = RoundedCornerShape(12.dp),
+        tonalElevation = 4.dp,
+        shadowElevation = 4.dp,
+        onClick = onClick,
+        modifier = modifier
+            .size(48.dp)
+            .testTag(testTag)
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Icon(
+                imageVector = if (isFullscreen) Icons.Rounded.FullscreenExit else Icons.Rounded.Fullscreen,
+                contentDescription = if (isFullscreen) strings.mapFullscreenExit else strings.mapFullscreenEnter,
+                tint = if (isFullscreen) VeloOrange else MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.size(22.dp)
+            )
+        }
+    }
+}
+
+@Composable
+fun FullScreenMapDialog(
+    title: String,
+    subtitle: String? = null,
+    onDismiss: () -> Unit,
+    content: @Composable (insetModifier: Modifier) -> Unit,
+) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false
+        )
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = MaterialTheme.colorScheme.background
+        ) {
+            BackHandler(onBack = onDismiss)
+            Box(modifier = Modifier.fillMaxSize()) {
+                content(Modifier.windowInsetsPadding(WindowInsets.safeDrawing))
+
+                // Top-left title pill with close control inside safe drawing insets
+                Surface(
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+                    shape = RoundedCornerShape(14.dp),
+                    tonalElevation = 4.dp,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .windowInsetsPadding(WindowInsets.safeDrawing)
+                        .padding(start = 10.dp, top = 10.dp, end = 160.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(start = 4.dp, end = 12.dp, top = 4.dp, bottom = 4.dp)
+                    ) {
+                        IconButton(
+                            onClick = onDismiss,
+                            modifier = Modifier
+                                .size(40.dp)
+                                .testTag("fullscreen_map_close_btn")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Close,
+                                contentDescription = rememberAppStrings().mapFullscreenExit
+                            )
+                        }
+                        Spacer(Modifier.width(4.dp))
+                        Column {
+                            Text(
+                                text = title,
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1
+                            )
+                            if (!subtitle.isNullOrBlank()) {
+                                Text(
+                                    text = subtitle,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 @SuppressLint("UnusedBoxWithConstraintsScope")
 @Composable
 fun RoutePolylineCanvas(
@@ -438,6 +549,8 @@ fun RoutePolylineCanvas(
     strokeColor: Color = VeloOrange,
     showGrid: Boolean = true,
     showMapControls: Boolean = true,
+    allowFullscreen: Boolean = showMapControls,
+    fullscreenTitle: String = "Route Map",
     testTagPrefix: String = "route_map",
 ) {
     val darkTheme = MaterialTheme.colorScheme.surface.luminance() < 0.5f
@@ -502,144 +615,186 @@ fun RoutePolylineCanvas(
     }
     var is3DView by remember { mutableStateOf(false) }
     var bearingDeg by remember { mutableFloatStateOf(0f) }
+    var isFullscreen by remember { mutableStateOf(false) }
 
-    BoxWithConstraints(
-        modifier = modifier
-            .clip(RoundedCornerShape(14.dp))
-            .background(if (selectedLayer == MapLayerType.DARK || darkTheme) Color(0xFF10151E) else Color(0xFFECEAE4))
+    @Composable
+    fun RenderRouteMapContent(
+        containerModifier: Modifier,
+        overlayInsetModifier: Modifier,
+        isCurrentlyFullscreen: Boolean,
+        onToggleFullscreen: () -> Unit,
+        tagPrefix: String,
     ) {
-        val widthPx = with(density) { maxWidth.toPx() }.coerceAtLeast(16f)
-        val heightPx = with(density) { maxHeight.toPx() }.coerceAtLeast(16f)
-        val padPx = with(density) { 26.dp.toPx() }
-        val baseViewport = remember(points, widthPx, heightPx, padPx) {
-            MapProjection.computeViewportForPoints(
-                points = points,
-                widthPx = widthPx,
-                heightPx = heightPx,
-                paddingPx = padPx
-            )
-        }
-        var activeViewport by remember(baseViewport) { mutableStateOf(baseViewport) }
-        val isTransformed = activeViewport != baseViewport || abs(bearingDeg) > 1f
-
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .clipToBounds()
-                .mapTransformGestures(
-                    gestureKey = points,
-                    allowOneFingerPan = abs(activeViewport.scalePx - baseViewport.scalePx) > baseViewport.scalePx * 0.05
-                ) { centroid, pan, zoom, rotation ->
-                    if (rotation != 0f) {
-                        bearingDeg = ((bearingDeg + rotation) % 360f)
-                    }
-                    var next = activeViewport
-                    if (zoom != 1f) {
-                        next = MapProjection.zoomAroundFocus(
-                            viewport = next,
-                            focusX = centroid.x,
-                            focusY = centroid.y,
-                            widthPx = widthPx,
-                            heightPx = heightPx,
-                            zoomFactor = zoom,
-                            bearingDeg = bearingDeg
-                        )
-                    }
-                    if (pan != Offset.Zero) {
-                        next = MapProjection.panViewport(next, pan.x, pan.y, bearingDeg)
-                    }
-                    activeViewport = next
-                }
+        BoxWithConstraints(
+            modifier = containerModifier
+                .background(if (selectedLayer == MapLayerType.DARK || darkTheme) Color(0xFF10151E) else Color(0xFFECEAE4))
         ) {
+            val widthPx = with(density) { maxWidth.toPx() }.coerceAtLeast(16f)
+            val heightPx = with(density) { maxHeight.toPx() }.coerceAtLeast(16f)
+            val padPx = with(density) { if (isCurrentlyFullscreen) 42.dp.toPx() else 26.dp.toPx() }
+            val baseViewport = remember(points, widthPx, heightPx, padPx) {
+                MapProjection.computeViewportForPoints(
+                    points = points,
+                    widthPx = widthPx,
+                    heightPx = heightPx,
+                    paddingPx = padPx
+                )
+            }
+            var activeViewport by remember(baseViewport) { mutableStateOf(baseViewport) }
+            val isTransformed = activeViewport != baseViewport || abs(bearingDeg) > 1f
+
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .graphicsLayer {
-                        if (is3DView) {
-                            rotationX = 32f
-                            cameraDistance = 24f * density.density
-                            scaleX = 1.16f
-                            scaleY = 1.16f
+                    .clipToBounds()
+                    .mapTransformGestures(
+                        gestureKey = points,
+                        allowOneFingerPan = isCurrentlyFullscreen || abs(activeViewport.scalePx - baseViewport.scalePx) > baseViewport.scalePx * 0.05
+                    ) { centroid, pan, zoom, rotation ->
+                        if (rotation != 0f) {
+                            bearingDeg = ((bearingDeg + rotation) % 360f)
                         }
-                        rotationZ = bearingDeg
+                        var next = activeViewport
+                        if (zoom != 1f) {
+                            next = MapProjection.zoomAroundFocus(
+                                viewport = next,
+                                focusX = centroid.x,
+                                focusY = centroid.y,
+                                widthPx = widthPx,
+                                heightPx = heightPx,
+                                zoomFactor = zoom,
+                                bearingDeg = bearingDeg
+                            )
+                        }
+                        if (pan != Offset.Zero) {
+                            next = MapProjection.panViewport(next, pan.x, pan.y, bearingDeg)
+                        }
+                        activeViewport = next
                     }
             ) {
-                MapTileBackground(
-                    viewport = activeViewport,
-                    widthPx = widthPx,
-                    heightPx = heightPx,
-                    darkTheme = darkTheme,
-                    layerType = selectedLayer
-                )
-
-                Canvas(modifier = Modifier.fillMaxSize()) {
-                    val mapped = points.map { pt ->
-                        val (px, py) = MapProjection.project(pt.lat, pt.lng, activeViewport, size.width, size.height)
-                        Offset(px, py)
-                    }
-
-                    val path = Path().apply {
-                        moveTo(mapped.first().x, mapped.first().y)
-                        for (i in 1 until mapped.size) {
-                            lineTo(mapped[i].x, mapped[i].y)
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer {
+                            if (is3DView) {
+                                rotationX = 32f
+                                cameraDistance = 24f * density.density
+                                scaleX = 1.16f
+                                scaleY = 1.16f
+                            }
+                            rotationZ = bearingDeg
                         }
+                ) {
+                    MapTileBackground(
+                        viewport = activeViewport,
+                        widthPx = widthPx,
+                        heightPx = heightPx,
+                        darkTheme = darkTheme,
+                        layerType = selectedLayer
+                    )
+
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        val mapped = points.map { pt ->
+                            val (px, py) = MapProjection.project(pt.lat, pt.lng, activeViewport, size.width, size.height)
+                            Offset(px, py)
+                        }
+
+                        val path = Path().apply {
+                            moveTo(mapped.first().x, mapped.first().y)
+                            for (i in 1 until mapped.size) {
+                                lineTo(mapped[i].x, mapped[i].y)
+                            }
+                        }
+
+                        drawPath(
+                            path = path,
+                            color = Color.Black.copy(alpha = if (selectedLayer == MapLayerType.DARK) 0.45f else 0.28f),
+                            style = Stroke(width = 12f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                        )
+                        drawPath(
+                            path = path,
+                            color = strokeColor.copy(alpha = 0.30f),
+                            style = Stroke(width = 16f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                        )
+                        drawPath(
+                            path = path,
+                            color = strokeColor,
+                            style = Stroke(width = 6.5f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                        )
+
+                        drawCircle(color = EmeraldPeak, radius = 9.5f, center = mapped.first())
+                        drawCircle(color = Color.White, radius = 4f, center = mapped.first())
+                        drawCircle(color = CrimsonPulse, radius = 9.5f, center = mapped.last())
+                        drawCircle(color = Color.White, radius = 4f, center = mapped.last())
                     }
-
-                    // Outer shadow & glow so route reads cleanly over both dark and bright streets
-                    drawPath(
-                        path = path,
-                        color = Color.Black.copy(alpha = if (selectedLayer == MapLayerType.DARK) 0.45f else 0.28f),
-                        style = Stroke(width = 12f, cap = StrokeCap.Round, join = StrokeJoin.Round)
-                    )
-                    drawPath(
-                        path = path,
-                        color = strokeColor.copy(alpha = 0.30f),
-                        style = Stroke(width = 16f, cap = StrokeCap.Round, join = StrokeJoin.Round)
-                    )
-                    drawPath(
-                        path = path,
-                        color = strokeColor,
-                        style = Stroke(width = 6.5f, cap = StrokeCap.Round, join = StrokeJoin.Round)
-                    )
-
-                    // Start & End markers
-                    drawCircle(color = EmeraldPeak, radius = 9.5f, center = mapped.first())
-                    drawCircle(color = Color.White, radius = 4f, center = mapped.first())
-                    drawCircle(color = CrimsonPulse, radius = 9.5f, center = mapped.last())
-                    drawCircle(color = Color.White, radius = 4f, center = mapped.last())
                 }
             }
-        }
 
-        if (showMapControls) {
-            MapControlsOverlay(
+            if (showMapControls || isCurrentlyFullscreen) {
+                MapControlsOverlay(
+                    layerType = selectedLayer,
+                    onSelectLayer = { selectedLayer = it },
+                    is3DView = is3DView,
+                    onToggle3D = { is3DView = !is3DView },
+                    bearingDeg = bearingDeg,
+                    onResetNorth = { bearingDeg = 0f },
+                    onZoomIn = { activeViewport = MapProjection.zoomViewport(activeViewport, 1.45f) },
+                    onZoomOut = { activeViewport = MapProjection.zoomViewport(activeViewport, 0.70f) },
+                    isTransformed = isTransformed,
+                    onResetView = {
+                        activeViewport = baseViewport
+                        bearingDeg = 0f
+                    },
+                    testTagPrefix = tagPrefix,
+                    modifier = overlayInsetModifier
+                        .align(Alignment.TopEnd)
+                        .padding(8.dp)
+                )
+            }
+
+            MapAttributionBadge(
+                darkTheme = darkTheme,
                 layerType = selectedLayer,
-                onSelectLayer = { selectedLayer = it },
-                is3DView = is3DView,
-                onToggle3D = { is3DView = !is3DView },
-                bearingDeg = bearingDeg,
-                onResetNorth = { bearingDeg = 0f },
-                onZoomIn = { activeViewport = MapProjection.zoomViewport(activeViewport, 1.45f) },
-                onZoomOut = { activeViewport = MapProjection.zoomViewport(activeViewport, 0.70f) },
-                isTransformed = isTransformed,
-                onResetView = {
-                    activeViewport = baseViewport
-                    bearingDeg = 0f
-                },
-                testTagPrefix = testTagPrefix,
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(6.dp)
+                modifier = overlayInsetModifier
+                    .align(if (allowFullscreen || isCurrentlyFullscreen) Alignment.BottomStart else Alignment.BottomEnd)
+                    .padding(8.dp)
+            )
+
+            if (allowFullscreen || isCurrentlyFullscreen) {
+                MapFullscreenButton(
+                    isFullscreen = isCurrentlyFullscreen,
+                    onClick = onToggleFullscreen,
+                    testTag = if (isCurrentlyFullscreen) "${testTagPrefix}_exit_fullscreen_btn" else "${testTagPrefix}_fullscreen_btn",
+                    modifier = overlayInsetModifier
+                        .align(Alignment.BottomEnd)
+                        .padding(8.dp)
+                )
+            }
+        }
+    }
+
+    RenderRouteMapContent(
+        containerModifier = modifier.clip(RoundedCornerShape(14.dp)),
+        overlayInsetModifier = Modifier,
+        isCurrentlyFullscreen = false,
+        onToggleFullscreen = { isFullscreen = true },
+        tagPrefix = testTagPrefix
+    )
+
+    if (isFullscreen) {
+        FullScreenMapDialog(
+            title = fullscreenTitle,
+            subtitle = "${points.size} GPS points • Pinch/drag to inspect",
+            onDismiss = { isFullscreen = false }
+        ) { insetModifier ->
+            RenderRouteMapContent(
+                containerModifier = Modifier.fillMaxSize(),
+                overlayInsetModifier = insetModifier,
+                isCurrentlyFullscreen = true,
+                onToggleFullscreen = { isFullscreen = false },
+                tagPrefix = "${testTagPrefix}_full"
             )
         }
-
-        MapAttributionBadge(
-            darkTheme = darkTheme,
-            layerType = selectedLayer,
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(6.dp)
-        )
     }
 }
 
@@ -648,6 +803,9 @@ fun RoutePolylineCanvas(
 fun MultiTrackMapCanvas(
     tracks: List<List<TrackPoint>>,
     modifier: Modifier = Modifier,
+    allowFullscreen: Boolean = true,
+    fullscreenTitle: String = "Personal Activity Heatmap",
+    testTagPrefix: String = "heatmap_map",
 ) {
     val darkTheme = MaterialTheme.colorScheme.surface.luminance() < 0.5f
     val allPoints = remember(tracks) { tracks.flatten() }
@@ -675,127 +833,171 @@ fun MultiTrackMapCanvas(
     }
     var is3DView by remember { mutableStateOf(false) }
     var bearingDeg by remember { mutableFloatStateOf(0f) }
+    var isFullscreen by remember { mutableStateOf(false) }
 
-    BoxWithConstraints(
-        modifier = modifier
-            .clip(RoundedCornerShape(16.dp))
-            .background(if (selectedLayer == MapLayerType.DARK || darkTheme) Color(0xFF0A0D12) else Color(0xFFECEAE4))
+    @Composable
+    fun RenderMultiTrackContent(
+        containerModifier: Modifier,
+        overlayInsetModifier: Modifier,
+        isCurrentlyFullscreen: Boolean,
+        onToggleFullscreen: () -> Unit,
+        tagPrefix: String,
     ) {
-        val widthPx = with(density) { maxWidth.toPx() }.coerceAtLeast(16f)
-        val heightPx = with(density) { maxHeight.toPx() }.coerceAtLeast(16f)
-        val padPx = with(density) { 28.dp.toPx() }
-        val baseViewport = remember(allPoints, widthPx, heightPx, padPx) {
-            MapProjection.computeViewportForPoints(
-                points = allPoints,
-                widthPx = widthPx,
-                heightPx = heightPx,
-                paddingPx = padPx
-            )
-        }
-        var activeViewport by remember(baseViewport) { mutableStateOf(baseViewport) }
-        val isTransformed = activeViewport != baseViewport || abs(bearingDeg) > 1f
-
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .clipToBounds()
-                .mapTransformGestures(
-                    gestureKey = allPoints,
-                    allowOneFingerPan = true
-                ) { centroid, pan, zoom, rotation ->
-                    if (rotation != 0f) {
-                        bearingDeg = ((bearingDeg + rotation) % 360f)
-                    }
-                    var next = activeViewport
-                    if (zoom != 1f) {
-                        next = MapProjection.zoomAroundFocus(
-                            viewport = next,
-                            focusX = centroid.x,
-                            focusY = centroid.y,
-                            widthPx = widthPx,
-                            heightPx = heightPx,
-                            zoomFactor = zoom,
-                            bearingDeg = bearingDeg
-                        )
-                    }
-                    if (pan != Offset.Zero) {
-                        next = MapProjection.panViewport(next, pan.x, pan.y, bearingDeg)
-                    }
-                    activeViewport = next
-                }
+        BoxWithConstraints(
+            modifier = containerModifier
+                .background(if (selectedLayer == MapLayerType.DARK || darkTheme) Color(0xFF0A0D12) else Color(0xFFECEAE4))
         ) {
+            val widthPx = with(density) { maxWidth.toPx() }.coerceAtLeast(16f)
+            val heightPx = with(density) { maxHeight.toPx() }.coerceAtLeast(16f)
+            val padPx = with(density) { if (isCurrentlyFullscreen) 44.dp.toPx() else 28.dp.toPx() }
+            val baseViewport = remember(allPoints, widthPx, heightPx, padPx) {
+                MapProjection.computeViewportForPoints(
+                    points = allPoints,
+                    widthPx = widthPx,
+                    heightPx = heightPx,
+                    paddingPx = padPx
+                )
+            }
+            var activeViewport by remember(baseViewport) { mutableStateOf(baseViewport) }
+            val isTransformed = activeViewport != baseViewport || abs(bearingDeg) > 1f
+
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .graphicsLayer {
-                        if (is3DView) {
-                            rotationX = 32f
-                            cameraDistance = 24f * density.density
-                            scaleX = 1.16f
-                            scaleY = 1.16f
+                    .clipToBounds()
+                    .mapTransformGestures(
+                        gestureKey = allPoints,
+                        allowOneFingerPan = true
+                    ) { centroid, pan, zoom, rotation ->
+                        if (rotation != 0f) {
+                            bearingDeg = ((bearingDeg + rotation) % 360f)
                         }
-                        rotationZ = bearingDeg
+                        var next = activeViewport
+                        if (zoom != 1f) {
+                            next = MapProjection.zoomAroundFocus(
+                                viewport = next,
+                                focusX = centroid.x,
+                                focusY = centroid.y,
+                                widthPx = widthPx,
+                                heightPx = heightPx,
+                                zoomFactor = zoom,
+                                bearingDeg = bearingDeg
+                            )
+                        }
+                        if (pan != Offset.Zero) {
+                            next = MapProjection.panViewport(next, pan.x, pan.y, bearingDeg)
+                        }
+                        activeViewport = next
                     }
             ) {
-                MapTileBackground(
-                    viewport = activeViewport,
-                    widthPx = widthPx,
-                    heightPx = heightPx,
-                    darkTheme = darkTheme,
-                    layerType = selectedLayer
-                )
-
-                Canvas(modifier = Modifier.fillMaxSize()) {
-                    tracks.forEach { track ->
-                        if (track.size >= 2) {
-                            val path = Path()
-                            track.forEachIndexed { idx, pt ->
-                                val (px, py) = MapProjection.project(pt.lat, pt.lng, activeViewport, size.width, size.height)
-                                if (idx == 0) path.moveTo(px, py) else path.lineTo(px, py)
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer {
+                            if (is3DView) {
+                                rotationX = 32f
+                                cameraDistance = 24f * density.density
+                                scaleX = 1.16f
+                                scaleY = 1.16f
                             }
-                            drawPath(
-                                path,
-                                VeloOrange.copy(alpha = 0.28f),
-                                style = Stroke(width = 16f, cap = StrokeCap.Round, join = StrokeJoin.Round)
-                            )
-                            drawPath(
-                                path,
-                                Color(0xFFFFB703).copy(alpha = 0.85f),
-                                style = Stroke(width = 5f, cap = StrokeCap.Round, join = StrokeJoin.Round)
-                            )
+                            rotationZ = bearingDeg
+                        }
+                ) {
+                    MapTileBackground(
+                        viewport = activeViewport,
+                        widthPx = widthPx,
+                        heightPx = heightPx,
+                        darkTheme = darkTheme,
+                        layerType = selectedLayer
+                    )
+
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        tracks.forEach { track ->
+                            if (track.size >= 2) {
+                                val path = Path()
+                                track.forEachIndexed { idx, pt ->
+                                    val (px, py) = MapProjection.project(pt.lat, pt.lng, activeViewport, size.width, size.height)
+                                    if (idx == 0) path.moveTo(px, py) else path.lineTo(px, py)
+                                }
+                                drawPath(
+                                    path,
+                                    VeloOrange.copy(alpha = 0.28f),
+                                    style = Stroke(width = 16f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                                )
+                                drawPath(
+                                    path,
+                                    Color(0xFFFFB703).copy(alpha = 0.85f),
+                                    style = Stroke(width = 5f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                                )
+                            }
                         }
                     }
                 }
             }
+
+            MapControlsOverlay(
+                layerType = selectedLayer,
+                onSelectLayer = { selectedLayer = it },
+                is3DView = is3DView,
+                onToggle3D = { is3DView = !is3DView },
+                bearingDeg = bearingDeg,
+                onResetNorth = { bearingDeg = 0f },
+                onZoomIn = { activeViewport = MapProjection.zoomViewport(activeViewport, 1.45f) },
+                onZoomOut = { activeViewport = MapProjection.zoomViewport(activeViewport, 0.70f) },
+                isTransformed = isTransformed,
+                onResetView = {
+                    activeViewport = baseViewport
+                    bearingDeg = 0f
+                },
+                testTagPrefix = tagPrefix,
+                modifier = overlayInsetModifier
+                    .align(Alignment.TopEnd)
+                    .padding(8.dp)
+            )
+
+            MapAttributionBadge(
+                darkTheme = darkTheme,
+                layerType = selectedLayer,
+                modifier = overlayInsetModifier
+                    .align(if (allowFullscreen || isCurrentlyFullscreen) Alignment.BottomStart else Alignment.BottomEnd)
+                    .padding(8.dp)
+            )
+
+            if (allowFullscreen || isCurrentlyFullscreen) {
+                MapFullscreenButton(
+                    isFullscreen = isCurrentlyFullscreen,
+                    onClick = onToggleFullscreen,
+                    testTag = if (isCurrentlyFullscreen) "${testTagPrefix}_exit_fullscreen_btn" else "${testTagPrefix}_fullscreen_btn",
+                    modifier = overlayInsetModifier
+                        .align(Alignment.BottomEnd)
+                        .padding(8.dp)
+                )
+            }
         }
+    }
 
-        MapControlsOverlay(
-            layerType = selectedLayer,
-            onSelectLayer = { selectedLayer = it },
-            is3DView = is3DView,
-            onToggle3D = { is3DView = !is3DView },
-            bearingDeg = bearingDeg,
-            onResetNorth = { bearingDeg = 0f },
-            onZoomIn = { activeViewport = MapProjection.zoomViewport(activeViewport, 1.45f) },
-            onZoomOut = { activeViewport = MapProjection.zoomViewport(activeViewport, 0.70f) },
-            isTransformed = isTransformed,
-            onResetView = {
-                activeViewport = baseViewport
-                bearingDeg = 0f
-            },
-            testTagPrefix = "heatmap_map",
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(8.dp)
-        )
+    RenderMultiTrackContent(
+        containerModifier = modifier.clip(RoundedCornerShape(16.dp)),
+        overlayInsetModifier = Modifier,
+        isCurrentlyFullscreen = false,
+        onToggleFullscreen = { isFullscreen = true },
+        tagPrefix = testTagPrefix
+    )
 
-        MapAttributionBadge(
-            darkTheme = darkTheme,
-            layerType = selectedLayer,
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(8.dp)
-        )
+    if (isFullscreen) {
+        FullScreenMapDialog(
+            title = fullscreenTitle,
+            subtitle = "${tracks.size} tracks • ${allPoints.size} GPS pts",
+            onDismiss = { isFullscreen = false }
+        ) { insetModifier ->
+            RenderMultiTrackContent(
+                containerModifier = Modifier.fillMaxSize(),
+                overlayInsetModifier = insetModifier,
+                isCurrentlyFullscreen = true,
+                onToggleFullscreen = { isFullscreen = false },
+                tagPrefix = "${testTagPrefix}_full"
+            )
+        }
     }
 }
 

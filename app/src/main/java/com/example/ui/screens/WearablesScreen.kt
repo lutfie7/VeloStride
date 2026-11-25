@@ -450,11 +450,23 @@ fun WearablesScreen(viewModel: MainViewModel) {
                                         )
                                     }
                                 }
+                                if (dev.isLiveScan) {
+                                    Spacer(Modifier.width(6.dp))
+                                    Surface(color = SignalCyan.copy(alpha = 0.18f), shape = RoundedCornerShape(6.dp)) {
+                                        Text(
+                                            "LIVE BLE",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = SignalCyan,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
                                 if (dev.isBonded) {
                                     Spacer(Modifier.width(6.dp))
                                     Surface(color = EmeraldPeak.copy(alpha = 0.18f), shape = RoundedCornerShape(6.dp)) {
                                         Text(
-                                            "BONDED",
+                                            "PAIRED",
                                             style = MaterialTheme.typography.labelSmall,
                                             color = EmeraldPeak,
                                             fontWeight = FontWeight.Bold,
@@ -464,7 +476,12 @@ fun WearablesScreen(viewModel: MainViewModel) {
                                 }
                             }
                             Text(
-                                text = "${dev.macAddress} • ${dev.rssi} dBm • ${dev.manufacturerName}",
+                                text = listOfNotNull(
+                                    dev.macAddress,
+                                    "${dev.rssi} dBm",
+                                    dev.deviceTypeLabel.takeIf { it.isNotBlank() },
+                                    dev.manufacturerName
+                                ).joinToString(" • "),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -486,9 +503,8 @@ fun WearablesScreen(viewModel: MainViewModel) {
                             Text(
                                 when {
                                     isConnectedThis -> "Live"
-                                    isConnectingThis -> "Pairing..."
-                                    dev.isBonded -> "Connect"
-                                    else -> "Pair"
+                                    isConnectingThis -> "Connecting..."
+                                    else -> "Connect"
                                 }
                             )
                         }

@@ -125,6 +125,8 @@ data class AppStrings(
     val weeklyVolumeTitle: String,
     val recordWorkoutBtn: String,
     val manualEntryBtn: String,
+    val mapFullscreenEnter: String,
+    val mapFullscreenExit: String,
 )
 
 fun appStringsFor(language: AppLanguage): AppStrings = when (language) {
@@ -233,6 +235,8 @@ fun appStringsFor(language: AppLanguage): AppStrings = when (language) {
         weeklyVolumeTitle = "WEEKLY VOLUME & READINESS",
         recordWorkoutBtn = "Record Workout",
         manualEntryBtn = "Manual Entry",
+        mapFullscreenEnter = "Fullscreen Map",
+        mapFullscreenExit = "Exit Fullscreen",
     )
 
     AppLanguage.INDONESIAN -> AppStrings(
@@ -340,6 +344,8 @@ fun appStringsFor(language: AppLanguage): AppStrings = when (language) {
         weeklyVolumeTitle = "VOLUME MINGGUAN & KESIAPAN",
         recordWorkoutBtn = "Rekam Latihan",
         manualEntryBtn = "Input Manual",
+        mapFullscreenEnter = "Peta Layar Penuh",
+        mapFullscreenExit = "Keluar Layar Penuh",
     )
 }
 

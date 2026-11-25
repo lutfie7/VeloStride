@@ -1,6 +1,7 @@
 package com.example.data.repository
 
 import android.content.Context
+import android.util.Log
 import com.example.R
 import com.example.core.OperationType
 import com.example.core.handleFirestoreError
@@ -365,24 +366,33 @@ class VeloStrideRepository(
 
             // Reconcile gear mileage if gear selection changed
             val oldGearId = existing.gearId?.takeIf { it.isNotBlank() }
-            if (oldGearId != newGearId && existing.distanceMeters > 0.0) {
-                if (oldGearId != null) {
-                    runCatching {
-                        val oldRef = userDoc(uid).collection("gear").document(oldGearId)
-                        val oldSnap = oldRef.get().await()
-                        if (oldSnap.exists()) {
-                            val currentDist = oldSnap.getDouble("distanceMeters") ?: 0.0
-                            val decremented = (currentDist - existing.distanceMeters).coerceAtLeast(0.0)
-                            oldRef.update(
-                                mapOf(
-                                    "distanceMeters" to decremented,
-                                    "updatedAt" to FieldValue.serverTimestamp()
-                                )
-                            ).await()
-                        }
+            val oldGearName = existing.gearName?.takeIf { it.isNotBlank() }
+            val gearChanged = oldGearId != newGearId || (oldGearId == null && oldGearName != newGearName)
+            if (gearChanged && existing.distanceMeters > 0.0) {
+                runCatching {
+                    val oldSnap = when {
+                        oldGearId != null -> userDoc(uid).collection("gear").document(oldGearId).get().await()
+                        oldGearName != null -> userDoc(uid).collection("gear")
+                            .whereEqualTo("name", oldGearName)
+                            .limit(1)
+                            .get()
+                            .await()
+                            .documents
+                            .firstOrNull()
+                        else -> null
+                    }
+                    if (oldSnap != null && oldSnap.exists() && oldSnap.id != newGearId) {
+                        val currentDist = oldSnap.getDouble("distanceMeters") ?: 0.0
+                        val decremented = computeDecrementedDistanceMeters(currentDist, existing.distanceMeters)
+                        oldSnap.reference.update(
+                            mapOf(
+                                "distanceMeters" to decremented,
+                                "updatedAt" to FieldValue.serverTimestamp()
+                            )
+                        ).await()
                     }
                 }
-                if (newGearId != null) {
+                if (newGearId != null && newGearId != oldGearId) {
                     runCatching {
                         userDoc(uid).collection("gear").document(newGearId).update(
                             mapOf(
@@ -408,7 +418,64 @@ class VeloStrideRepository(
         return try {
             val uid = requireUserId()
             check(uid == userId && workoutId.isNotBlank())
-            userDoc(uid).collection("workouts").document(workoutId).delete().await()
+            val workoutRef = userDoc(uid).collection("workouts").document(workoutId)
+            val workoutSnap = workoutRef.get().await()
+            val deletedDist = (workoutSnap.getDouble("distanceMeters") ?: 0.0).coerceAtLeast(0.0)
+            val linkedGearId = workoutSnap.getString("gearId")?.takeIf { it.isNotBlank() }
+            val linkedGearName = workoutSnap.getString("gearName")?.takeIf { it.isNotBlank() }
+
+            workoutRef.delete().await()
+
+            if (workoutSnap.exists()) {
+                // Decrement associated gear mileage safely (clamped >= 0.0)
+                if (deletedDist > 0.0 && (linkedGearId != null || linkedGearName != null)) {
+                    runCatching {
+                        val gearSnap = when {
+                            linkedGearId != null ->
+                                userDoc(uid).collection("gear").document(linkedGearId).get().await()
+                            linkedGearName != null ->
+                                userDoc(uid).collection("gear")
+                                    .whereEqualTo("name", linkedGearName)
+                                    .limit(1)
+                                    .get()
+                                    .await()
+                                    .documents
+                                    .firstOrNull()
+                            else -> null
+                        }
+                        if (gearSnap != null && gearSnap.exists()) {
+                            val currentGearDist = gearSnap.getDouble("distanceMeters") ?: 0.0
+                            val updatedGearDist = computeDecrementedDistanceMeters(currentGearDist, deletedDist)
+                            gearSnap.reference.update(
+                                mapOf(
+                                    "distanceMeters" to updatedGearDist,
+                                    "updatedAt" to FieldValue.serverTimestamp()
+                                )
+                            ).await()
+                        }
+                    }.onFailure { err ->
+                        Log.w("VeloStrideRepository", "Failed to decrement gear distance on delete: ${err.message}")
+                    }
+                }
+
+                // Reconcile user aggregate distance and workout count safely
+                runCatching {
+                    val userSnap = userDoc(uid).get().await()
+                    if (userSnap.exists()) {
+                        val currentTotalDist = userSnap.getDouble("totalDistanceMeters") ?: 0.0
+                        val currentTotalWorkouts = (userSnap.getLong("totalWorkouts") ?: 0L).coerceAtLeast(0L)
+                        userDoc(uid).update(
+                            mapOf(
+                                "totalDistanceMeters" to computeDecrementedDistanceMeters(currentTotalDist, deletedDist),
+                                "totalWorkouts" to (currentTotalWorkouts - 1L).coerceAtLeast(0L),
+                                "updatedAt" to FieldValue.serverTimestamp()
+                            )
+                        ).await()
+                    }
+                }.onFailure { err ->
+                    Log.w("VeloStrideRepository", "Failed to decrement user totals on delete: ${err.message}")
+                }
+            }
             Result.success(Unit)
         } catch (e: CancellationException) {
             throw e
@@ -815,5 +882,13 @@ class VeloStrideRepository(
             handleFirestoreError(exceptionToLog, op, path)
         }
         throw error
+    }
+
+    companion object {
+        fun computeDecrementedDistanceMeters(currentMeters: Double, deletedMeters: Double): Double {
+            val safeCurrent = currentMeters.coerceAtLeast(0.0)
+            val safeDeleted = deletedMeters.coerceAtLeast(0.0)
+            return (safeCurrent - safeDeleted).coerceAtLeast(0.0)
+        }
     }
 }
