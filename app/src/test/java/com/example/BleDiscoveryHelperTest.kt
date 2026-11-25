@@ -122,4 +122,43 @@ class BleDiscoveryHelperTest {
         val sorted = BleDiscoveryHelper.sortCandidates(listOf(bonded, live))
         assertEquals("66:77:88:99:AA:BB", sorted.first().macAddress)
     }
+
+    @Test
+    fun buildConnectPlan_prioritizesAutoAndPassiveForBondedDualDevice() {
+        val bondedDualPlan = BleDiscoveryHelper.buildConnectPlan(
+            deviceType = BleDiscoveryHelper.DEVICE_TYPE_DUAL,
+            isLiveScan = false,
+            isSystemGattConnected = false
+        )
+        assertEquals(
+            listOf(
+                BleDiscoveryHelper.GattConnectMode.DIRECT_AUTO,
+                BleDiscoveryHelper.GattConnectMode.PASSIVE_LE,
+                BleDiscoveryHelper.GattConnectMode.PASSIVE_AUTO,
+                BleDiscoveryHelper.GattConnectMode.DIRECT_LE
+            ),
+            bondedDualPlan
+        )
+
+        val liveDualPlan = BleDiscoveryHelper.buildConnectPlan(
+            deviceType = BleDiscoveryHelper.DEVICE_TYPE_DUAL,
+            isLiveScan = true,
+            isSystemGattConnected = false
+        )
+        assertEquals(BleDiscoveryHelper.GattConnectMode.DIRECT_LE, liveDualPlan.first())
+
+        val systemConnectedPlan = BleDiscoveryHelper.buildConnectPlan(
+            deviceType = BleDiscoveryHelper.DEVICE_TYPE_DUAL,
+            isLiveScan = false,
+            isSystemGattConnected = true
+        )
+        assertEquals(BleDiscoveryHelper.GattConnectMode.PASSIVE_AUTO, systemConnectedPlan.first())
+
+        val lePlan = BleDiscoveryHelper.buildConnectPlan(
+            deviceType = BleDiscoveryHelper.DEVICE_TYPE_LE,
+            isLiveScan = true,
+            isSystemGattConnected = false
+        )
+        assertEquals(BleDiscoveryHelper.GattConnectMode.DIRECT_LE, lePlan.first())
+    }
 }

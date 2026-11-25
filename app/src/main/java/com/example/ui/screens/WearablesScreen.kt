@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -61,6 +62,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.health.connect.client.PermissionController
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -181,12 +183,12 @@ fun WearablesScreen(viewModel: MainViewModel) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text("Setup Checklist for Real-Time Sync:", style = MaterialTheme.typography.labelLarge)
                         Text(
-                            "1. On your Wearable Device: Settings -> Workout -> Heart Rate Broadcast -> ON for real-time BLE GATT BPM, HRV & Running Cadence.",
+                            "1. On your Wearable Device: Settings -> Workout -> Heart Rate Broadcast -> ON (or start an active Workout), then tap Scan BLE Sensors and pick the 'LIVE BLE' / 'HR 0x180D' entry.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Text(
-                            "2. In your Wearable Companion app: Privacy / Data Sharing -> enable Health Connect for daily Steps, Calories & Sleep Stages.",
+                            "2. If your wearable companion app locks direct Bluetooth, enable Health Connect in its Privacy / Data Sharing menu and use Health Connect Sync below.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -425,21 +427,37 @@ fun WearablesScreen(viewModel: MainViewModel) {
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(14.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column(Modifier.weight(1f)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
                                 Icon(
                                     Icons.Rounded.Watch,
                                     contentDescription = null,
                                     tint = if (dev.isHuaweiDevice) VeloOrange else SignalCyan,
                                     modifier = Modifier.size(18.dp)
                                 )
-                                Spacer(Modifier.width(6.dp))
-                                Text(dev.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                Text(
+                                    text = dev.name,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f, fill = false)
+                                )
+                            }
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
                                 if (dev.isHuaweiDevice) {
-                                    Spacer(Modifier.width(6.dp))
                                     Surface(color = VeloOrange.copy(alpha = 0.2f), shape = RoundedCornerShape(6.dp)) {
                                         Text(
                                             "WEARABLE",
@@ -451,7 +469,6 @@ fun WearablesScreen(viewModel: MainViewModel) {
                                     }
                                 }
                                 if (dev.isLiveScan) {
-                                    Spacer(Modifier.width(6.dp))
                                     Surface(color = SignalCyan.copy(alpha = 0.18f), shape = RoundedCornerShape(6.dp)) {
                                         Text(
                                             "LIVE BLE",
@@ -463,13 +480,22 @@ fun WearablesScreen(viewModel: MainViewModel) {
                                     }
                                 }
                                 if (dev.isBonded) {
-                                    Spacer(Modifier.width(6.dp))
                                     Surface(color = EmeraldPeak.copy(alpha = 0.18f), shape = RoundedCornerShape(6.dp)) {
                                         Text(
                                             "PAIRED",
                                             style = MaterialTheme.typography.labelSmall,
                                             color = EmeraldPeak,
                                             fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+                                dev.advertisedServices.take(3).forEach { svc ->
+                                    Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(6.dp)) {
+                                        Text(
+                                            svc,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                         )
                                     }
@@ -498,7 +524,9 @@ fun WearablesScreen(viewModel: MainViewModel) {
                                     viewModel.bleManager.connectToDevice(dev.macAddress, dev.isHuaweiDevice)
                                 }
                             },
-                            modifier = Modifier.testTag("connect_ble_${dev.macAddress}")
+                            modifier = Modifier
+                                .heightIn(min = 48.dp)
+                                .testTag("connect_ble_${dev.macAddress}")
                         ) {
                             Text(
                                 when {

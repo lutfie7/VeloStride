@@ -126,4 +126,44 @@ object BleDiscoveryHelper {
                 .thenByDescending { it.rssi }
         )
     }
+
+    enum class GattConnectMode(
+        val autoConnect: Boolean,
+        val useTransportAuto: Boolean,
+        val timeoutMs: Long,
+        val label: String,
+    ) {
+        DIRECT_LE(false, false, 9_000L, "Direct BLE LE"),
+        DIRECT_AUTO(false, true, 9_000L, "Direct Dual/Auto"),
+        PASSIVE_LE(true, false, 8_000L, "Passive BLE LE"),
+        PASSIVE_AUTO(true, true, 8_000L, "Passive Auto");
+    }
+
+    fun buildConnectPlan(
+        deviceType: Int,
+        isLiveScan: Boolean,
+        isSystemGattConnected: Boolean,
+    ): List<GattConnectMode> = when {
+        isSystemGattConnected -> listOf(
+            GattConnectMode.PASSIVE_AUTO,
+            GattConnectMode.PASSIVE_LE,
+            GattConnectMode.DIRECT_AUTO
+        )
+        deviceType == DEVICE_TYPE_DUAL && !isLiveScan -> listOf(
+            GattConnectMode.DIRECT_AUTO,
+            GattConnectMode.PASSIVE_LE,
+            GattConnectMode.PASSIVE_AUTO,
+            GattConnectMode.DIRECT_LE
+        )
+        deviceType == DEVICE_TYPE_DUAL -> listOf(
+            GattConnectMode.DIRECT_LE,
+            GattConnectMode.PASSIVE_LE,
+            GattConnectMode.DIRECT_AUTO
+        )
+        else -> listOf(
+            GattConnectMode.DIRECT_LE,
+            GattConnectMode.PASSIVE_LE,
+            GattConnectMode.PASSIVE_AUTO
+        )
+    }
 }

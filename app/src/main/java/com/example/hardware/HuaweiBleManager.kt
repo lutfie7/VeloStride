@@ -60,6 +60,8 @@ class HuaweiBleManager(private val context: Context) {
     private var userRequestedDisconnect = false
     private var reconnectAttempts = 0
     private var handshakeRetries = 0
+    private var connectPlan: List<BleDiscoveryHelper.GattConnectMode> = emptyList()
+    private var connectPlanIndex = 0
     private var serviceRefreshAttemptedForConnection = false
     private var authBondRequestedForConnection = false
     private var lastTargetMac: String? = null
@@ -123,7 +125,7 @@ class HuaweiBleManager(private val context: Context) {
                                         delay(250L)
                                         gatt.discoverServices()
                                     } else {
-                                        connectGattInternal(device, autoConnect = false)
+                                        launchConnectStep(device, connectPlanIndex)
                                     }
                                 }
                             }
@@ -139,7 +141,7 @@ class HuaweiBleManager(private val context: Context) {
                                 connectJob?.cancel()
                                 connectJob = scope.launch {
                                     delay(300L)
-                                    connectGattInternal(device, autoConnect = false)
+                                    launchConnectStep(device, connectPlanIndex)
                                 }
                             }
                         }
@@ -183,6 +185,7 @@ class HuaweiBleManager(private val context: Context) {
     companion object {
         private const val TAG = "HuaweiBleManager"
         private const val HUAWEI_MANUFACTURER_ID = 0x027D // 637 decimal
+        private const val HONOR_MANUFACTURER_ID = 0x04D3 // 1235 decimal
 
         val HEART_RATE_SERVICE: UUID = UUID.fromString("0000180d-0000-1000-8000-00805f9b34fb")
         val HEART_RATE_MEASUREMENT: UUID = UUID.fromString("00002a37-0000-1000-8000-00805f9b34fb")
@@ -365,9 +368,18 @@ class HuaweiBleManager(private val context: Context) {
         discoveredMap.clear()
         populateSystemAndConnectedDevices(adapter)
 
-        val settings = ScanSettings.Builder()
+        val settingsBuilder = ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
-            .build()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            settingsBuilder
+                .setCallbackType(ScanSettings.CALLBACK_TYPE_ALL_MATCHES)
+                .setMatchMode(ScanSettings.MATCH_MODE_AGGRESSIVE)
+                .setNumOfMatches(ScanSettings.MATCH_NUM_MAX_ADVERTISEMENT)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && adapter.isLeExtendedAdvertisingSupported) {
+            settingsBuilder.setLegacy(false)
+        }
+        val settings = settingsBuilder.build()
 
         _state.update {
             it.copy(
@@ -469,13 +481,27 @@ class HuaweiBleManager(private val context: Context) {
             return
         }
 
+        val candidate = discoveredMap[macAddress]
+        val isLiveScan = candidate?.isLiveScan == true
+        val isSystemGattConnected = runCatching {
+            bluetoothManager?.getConnectionState(device, BluetoothProfile.GATT) == BluetoothProfile.STATE_CONNECTED
+        }.getOrDefault(false)
+
+        connectPlan = BleDiscoveryHelper.buildConnectPlan(
+            deviceType = devType,
+            isLiveScan = isLiveScan,
+            isSystemGattConnected = isSystemGattConnected
+        )
+        connectPlanIndex = 0
+
         closeActiveGattOnly()
         val devName = try {
-            device.name ?: discoveredMap[macAddress]?.name ?: "BLE Wearable"
+            device.name ?: candidate?.name ?: "BLE Wearable"
         } catch (_: SecurityException) {
-            discoveredMap[macAddress]?.name ?: "BLE Wearable"
+            candidate?.name ?: "BLE Wearable"
         }
         val huaweiFlag = isHuaweiHint || isHuaweiName(devName)
+        val firstMode = connectPlan.firstOrNull() ?: BleDiscoveryHelper.GattConnectMode.DIRECT_LE
 
         _state.update {
             it.copy(
@@ -483,49 +509,126 @@ class HuaweiBleManager(private val context: Context) {
                 connectedDeviceName = devName,
                 connectedMacAddress = macAddress,
                 isHuaweiNative = huaweiFlag,
-                statusMessage = "Opening direct BLE GATT telemetry link to $devName..."
+                statusMessage = "Connecting to $devName (${firstMode.label}, 1/${connectPlan.size})..."
             )
         }
 
         // Wait 300ms after stopScan so Android BT stack clears scan state (prevents GATT 133 errors),
-        // then connect directly over TRANSPORT_LE without forcing OS createBond() upfront
-        // (HarmonyOS / Huawei Band 11 Pro rejects third-party createBond requests while still streaming 0x180D over direct GATT).
+        // then execute the prioritized connection plan (TRANSPORT_AUTO / passive / TRANSPORT_LE).
         connectJob = scope.launch {
             delay(300L)
-            connectGattInternal(device, autoConnect = false)
+            launchConnectStep(device, 0)
         }
     }
 
     @SuppressLint("MissingPermission")
-    private fun connectGattInternal(
-        device: BluetoothDevice,
-        autoConnect: Boolean = false,
-        useTransportAuto: Boolean = false,
-    ) {
-        closeActiveGattOnly()
-        activeGatt = runCatching {
-            if (useTransportAuto) {
-                device.connectGatt(appContext, autoConnect, gattCallback, BluetoothDevice.TRANSPORT_AUTO)
-            } else {
-                device.connectGatt(appContext, autoConnect, gattCallback, BluetoothDevice.TRANSPORT_LE)
-            }
-        }.getOrElse {
-            device.connectGatt(appContext, autoConnect, gattCallback)
+    private fun launchConnectStep(device: BluetoothDevice, stepIndex: Int) {
+        if (userRequestedDisconnect) return
+        val plan = connectPlan.ifEmpty {
+            listOf(BleDiscoveryHelper.GattConnectMode.DIRECT_LE)
+        }
+        if (stepIndex >= plan.size) {
+            handleConnectExhausted(
+                lastStatus = 133,
+                devName = _state.value.connectedDeviceName ?: "Wearable Device"
+            )
+            return
+        }
+        connectPlanIndex = stepIndex
+        val mode = plan[stepIndex]
+        val devName = _state.value.connectedDeviceName
+            ?: discoveredMap[device.address]?.name
+            ?: "Wearable Device"
+
+        closeDeadGattOnly(refreshCache = stepIndex > 0)
+
+        _state.update {
+            it.copy(
+                status = BleConnectionStatus.CONNECTING,
+                statusMessage = "Connecting to $devName (${mode.label}, ${stepIndex + 1}/${plan.size})..."
+            )
         }
 
-        if (autoConnect) {
-            bondTimeoutJob?.cancel()
-            bondTimeoutJob = scope.launch {
-                delay(12_000L)
-                if (_state.value.status == BleConnectionStatus.CONNECTING && !userRequestedDisconnect) {
-                    closeActiveGattOnly()
-                    _state.update {
-                        it.copy(
-                            status = BleConnectionStatus.DISCONNECTED,
-                            statusMessage = "Connection timed out. Ensure Heart Rate Broadcast or Workout is active on your Wearable Device and scan again."
-                        )
-                    }
+        val transport = if (mode.useTransportAuto) {
+            BluetoothDevice.TRANSPORT_AUTO
+        } else {
+            BluetoothDevice.TRANSPORT_LE
+        }
+
+        val newGatt = runCatching {
+            device.connectGatt(appContext, mode.autoConnect, gattCallback, transport)
+        }.getOrElse {
+            runCatching { device.connectGatt(appContext, mode.autoConnect, gattCallback) }.getOrNull()
+        }
+        activeGatt = newGatt
+
+        if (newGatt == null) {
+            connectJob?.cancel()
+            connectJob = scope.launch {
+                delay(400L)
+                launchConnectStep(device, stepIndex + 1)
+            }
+            return
+        }
+
+        bondTimeoutJob?.cancel()
+        bondTimeoutJob = scope.launch {
+            delay(mode.timeoutMs)
+            if (activeGatt === newGatt &&
+                _state.value.status == BleConnectionStatus.CONNECTING &&
+                !userRequestedDisconnect
+            ) {
+                Log.w(TAG, "Step ${stepIndex + 1}/${plan.size} (${mode.label}) timed out after ${mode.timeoutMs}ms")
+                closeDeadGattOnly(newGatt, refreshCache = true)
+                val nextIdx = stepIndex + 1
+                if (nextIdx < plan.size) {
+                    delay(350L)
+                    launchConnectStep(device, nextIdx)
+                } else {
+                    handleConnectExhausted(lastStatus = 133, devName = devName)
                 }
+            }
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun handleConnectExhausted(lastStatus: Int, devName: String) {
+        val shouldRetry = !userRequestedDisconnect &&
+            _state.value.autoReconnectEnabled &&
+            lastTargetMac != null &&
+            reconnectAttempts < 2
+
+        if (shouldRetry) {
+            reconnectAttempts++
+            val backoffMs = reconnectAttempts * 2500L
+            _state.update {
+                it.copy(
+                    status = BleConnectionStatus.CONNECTING,
+                    statusMessage = "Waiting for $devName BLE link (status $lastStatus). Auto-retrying ($reconnectAttempts/2)..."
+                )
+            }
+            reconnectJob?.cancel()
+            reconnectJob = scope.launch {
+                delay(backoffMs)
+                lastTargetMac?.let { mac ->
+                    connectToDevice(mac, _state.value.isHuaweiNative)
+                }
+            }
+        } else {
+            val candidate = lastTargetMac?.let { discoveredMap[it] }
+            val message = when {
+                userRequestedDisconnect -> "Disconnected."
+                candidate != null && !candidate.isLiveScan && candidate.deviceTypeLabel == "Dual" ->
+                    "BLE GATT rejected (status $lastStatus) on paired Dual link. On $devName: turn ON Heart Rate Broadcast / Workout, tap Scan BLE Sensors & pick the 'LIVE BLE' entry — or use Health Connect Sync below."
+                else ->
+                    "Disconnected (status $lastStatus). Turn ON Heart Rate Broadcast on your Wearable Device and close exclusive companion workout locks, or use Health Connect Sync."
+            }
+            _state.update {
+                it.copy(
+                    status = BleConnectionStatus.DISCONNECTED,
+                    liveHeartRateBpm = 0,
+                    statusMessage = message
+                )
             }
         }
     }
@@ -574,6 +677,22 @@ class HuaweiBleManager(private val context: Context) {
     }
 
     @SuppressLint("MissingPermission")
+    private fun closeDeadGattOnly(gatt: BluetoothGatt? = activeGatt, refreshCache: Boolean = false) {
+        gattOpQueue.clear()
+        gattOpInFlight = false
+        if (gatt != null) {
+            if (refreshCache) {
+                refreshGattCache(gatt)
+            }
+            runCatching { gatt.close() }
+                .onFailure { Log.w(TAG, "Error closing dead GATT: ${it.message}") }
+        }
+        if (gatt === activeGatt) {
+            activeGatt = null
+        }
+    }
+
+    @SuppressLint("MissingPermission")
     private fun closeActiveGattOnly() {
         gattOpQueue.clear()
         gattOpInFlight = false
@@ -598,9 +717,12 @@ class HuaweiBleManager(private val context: Context) {
             } catch (_: SecurityException) {
                 record?.deviceName
             }
-            val serviceUuids = record?.serviceUuids?.map { it.uuid } ?: emptyList()
+            val advertisedUuids = record?.serviceUuids?.map { it.uuid } ?: emptyList()
+            val serviceDataUuids = record?.serviceData?.keys?.map { it.uuid } ?: emptyList()
+            val serviceUuids = (advertisedUuids + serviceDataUuids).distinct()
             val serviceUuidStrings = serviceUuids.map { it.toString() }
-            val hasHuaweiMfg = record?.getManufacturerSpecificData(HUAWEI_MANUFACTURER_ID) != null
+            val hasHuaweiMfg = record?.getManufacturerSpecificData(HUAWEI_MANUFACTURER_ID) != null ||
+                record?.getManufacturerSpecificData(HONOR_MANUFACTURER_ID) != null
             val hasHuaweiService = serviceUuids.any {
                 it == HUAWEI_WEAR_UUID_FE86 || it == HUAWEI_WEAR_UUID_3802 || it == HUAWEI_WEAR_UUID_FD82 || it == HUAWEI_WEAR_UUID_FEEA
             }
@@ -679,6 +801,11 @@ class HuaweiBleManager(private val context: Context) {
     private val gattCallback = object : BluetoothGattCallback() {
         @SuppressLint("MissingPermission")
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+            if (gatt !== activeGatt) {
+                Log.d(TAG, "Ignoring stale GATT callback (status=$status, newState=$newState)")
+                runCatching { gatt.close() }
+                return
+            }
             if (newState == BluetoothProfile.STATE_CONNECTED && status == BluetoothGatt.GATT_SUCCESS) {
                 reconnectAttempts = 0
                 handshakeRetries = 0
@@ -696,82 +823,43 @@ class HuaweiBleManager(private val context: Context) {
                 connectJob?.cancel()
                 connectJob = scope.launch {
                     delay(450L)
-                    if (activeGatt == gatt && !userRequestedDisconnect) {
+                    if (activeGatt === gatt && !userRequestedDisconnect) {
                         gatt.discoverServices()
                     }
                 }
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED || status != BluetoothGatt.GATT_SUCCESS) {
                 val targetDevice = gatt.device
-                val devType = runCatching { targetDevice.type }.getOrDefault(BluetoothDevice.DEVICE_TYPE_UNKNOWN)
                 bondTimeoutJob?.cancel()
-                if (status != BluetoothGatt.GATT_SUCCESS) {
-                    refreshGattCache(gatt)
-                }
-                closeActiveGattOnly()
+                closeDeadGattOnly(gatt, refreshCache = status != BluetoothGatt.GATT_SUCCESS)
 
-                val isRecoverableHandshakeError = status == 133 || status == 8 || status == 19 || status == 22 || status == 62
-                if (!userRequestedDisconnect && isRecoverableHandshakeError && handshakeRetries < 3) {
-                    handshakeRetries++
-                    val attempt = handshakeRetries
-                    val useAutoConnect = attempt == 2
-                    val useTransportAuto = attempt == 3 && devType == BluetoothDevice.DEVICE_TYPE_DUAL
+                val isRecoverableHandshakeError = status == 133 || status == 8 || status == 19 || status == 22 || status == 62 || status == 147 || status == 257
+                val nextStep = connectPlanIndex + 1
+                if (!userRequestedDisconnect && isRecoverableHandshakeError && nextStep < connectPlan.size) {
+                    val nextMode = connectPlan[nextStep]
                     _state.update {
                         it.copy(
                             status = BleConnectionStatus.CONNECTING,
-                            statusMessage = "Retrying BLE handshake (status $status, attempt $attempt/3)..."
+                            statusMessage = "Status $status — trying ${nextMode.label} (${nextStep + 1}/${connectPlan.size})..."
                         )
                     }
                     connectJob?.cancel()
                     connectJob = scope.launch {
-                        delay(500L)
-                        connectGattInternal(
-                            device = targetDevice,
-                            autoConnect = useAutoConnect,
-                            useTransportAuto = useTransportAuto
-                        )
+                        delay(450L)
+                        launchConnectStep(targetDevice, nextStep)
                     }
                     return
                 }
 
-                val shouldRetry = !userRequestedDisconnect &&
-                    _state.value.autoReconnectEnabled &&
-                    lastTargetMac != null &&
-                    reconnectAttempts < 3
-
-                if (shouldRetry) {
-                    reconnectAttempts++
-                    val backoffMs = reconnectAttempts * 2500L
-                    _state.update {
-                        it.copy(
-                            status = BleConnectionStatus.CONNECTING,
-                            statusMessage = "Link dropped (status $status). Auto-reconnecting ($reconnectAttempts/3)..."
-                        )
-                    }
-                    reconnectJob?.cancel()
-                    reconnectJob = scope.launch {
-                        delay(backoffMs)
-                        lastTargetMac?.let { mac ->
-                            connectToDevice(mac, _state.value.isHuaweiNative)
-                        }
-                    }
-                } else {
-                    _state.update {
-                        it.copy(
-                            status = BleConnectionStatus.DISCONNECTED,
-                            liveHeartRateBpm = 0,
-                            statusMessage = if (userRequestedDisconnect) {
-                                "Disconnected."
-                            } else {
-                                "Disconnected (status $status). Enable Heart Rate Broadcast on your Wearable Device and ensure no other workout app holds an exclusive HR lock."
-                            }
-                        )
-                    }
-                }
+                handleConnectExhausted(
+                    lastStatus = status,
+                    devName = _state.value.connectedDeviceName ?: "Wearable Device"
+                )
             }
         }
 
         @SuppressLint("MissingPermission")
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
+            if (gatt !== activeGatt) return
             if (status != BluetoothGatt.GATT_SUCCESS) {
                 _state.update { it.copy(statusMessage = "GATT service discovery failed ($status).") }
                 return
@@ -849,6 +937,7 @@ class HuaweiBleManager(private val context: Context) {
 
         @SuppressLint("MissingPermission")
         override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
+            if (gatt !== activeGatt) return
             if ((status == BluetoothGatt.GATT_INSUFFICIENT_AUTHENTICATION ||
                     status == BluetoothGatt.GATT_INSUFFICIENT_ENCRYPTION ||
                     status == 137) && !authBondRequestedForConnection
@@ -868,6 +957,7 @@ class HuaweiBleManager(private val context: Context) {
             value: ByteArray,
             status: Int,
         ) {
+            if (gatt !== activeGatt) return
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 handleCharacteristicValue(characteristic.uuid, value)
             }
@@ -881,6 +971,7 @@ class HuaweiBleManager(private val context: Context) {
             characteristic: BluetoothGattCharacteristic,
             status: Int,
         ) {
+            if (gatt !== activeGatt) return
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 @Suppress("DEPRECATION")
                 characteristic.value?.let { handleCharacteristicValue(characteristic.uuid, it) }
@@ -894,6 +985,7 @@ class HuaweiBleManager(private val context: Context) {
             characteristic: BluetoothGattCharacteristic,
             value: ByteArray,
         ) {
+            if (gatt !== activeGatt) return
             handleCharacteristicValue(characteristic.uuid, value)
         }
 
@@ -902,6 +994,7 @@ class HuaweiBleManager(private val context: Context) {
             gatt: BluetoothGatt,
             characteristic: BluetoothGattCharacteristic,
         ) {
+            if (gatt !== activeGatt) return
             @Suppress("DEPRECATION")
             characteristic.value?.let { handleCharacteristicValue(characteristic.uuid, it) }
         }
